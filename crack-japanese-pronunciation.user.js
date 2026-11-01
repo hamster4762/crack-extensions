@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Crack 일본어 대사 한글 발음 호버
 // @namespace    https://crack.wrtn.ai/
-// @version      1.3.3
+// @version      1.3.4
 // @downloadURL  none
 // @description  Crack 일본어 대사의 한글 발음을 PC 호버, 모바일 더블탭·텍스트 선택으로 표시합니다.
 // @author       User
@@ -15,6 +15,10 @@
 // @connect      generativelanguage.googleapis.com
 // @connect      www.gstatic.com
 // @connect      firebaseappcheck.googleapis.com
+// @connect      api.github.com
+// @connect      github.com
+// @connect      objects.githubusercontent.com
+// @connect      release-assets.githubusercontent.com
 // @license      MIT
 // ==/UserScript==
 
@@ -975,17 +979,49 @@
     const LOCAL_DICT_URL = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/';
     const LOCAL_KUROSHIRO_URL = 'https://cdn.jsdelivr.net/npm/kuroshiro@1.2.0/dist/kuroshiro.min.js';
     const LOCAL_ANALYZER_URL = 'https://cdn.jsdelivr.net/npm/kuroshiro-analyzer-kuromoji@1.1.0/dist/kuroshiro-analyzer-kuromoji.min.js';
-    const LOCAL_TIMEOUT = 30000;
+    const LOCAL_TIMEOUT = 120000;
     let localWorker = null;
     let localWorkerUrl = null;
     let localReady = null;
     let localSequence = 0;
     const localJobs = new Map();
+    const localDictionaryStatus = {
+        kuromoji: {state: 'idle', count: null, error: ''},
+        jmdict: {state: 'idle', count: null, error: '', version: '', url: ''},
+        lastLookup: '아직 조회하지 않음'
+    };
+    function updateLocalDictionaryUi() {
+        const box = shadow.getElementById('local-dictionary-status');
+        if (!box) return;
+        const name = {idle: '미로드', loading: '로딩 중…', ready: '로드 완료', error: '실패'};
+        const k = localDictionaryStatus.kuromoji, j = localDictionaryStatus.jmdict;
+        box.textContent = 'Kuromoji: ' + (name[k.state] || k.state) + (k.error ? ' — ' + k.error : '')
+          + '\nJMdictFurigana: ' + (name[j.state] || j.state)
+          + (j.count != null ? ' (' + j.count.toLocaleString() + '개 표제어)' : '')
+          + (j.version ? ' / ' + j.version : '')
+          + (j.phase && j.state === 'loading' ? ' / ' + j.phase : '')
+          + (j.error ? ' — ' + j.error : '')
+          + '\n최근 조회: ' + localDictionaryStatus.lastLookup;
+    }
+    function updateWorkerStatus(info) {
+        if (info?.dictionary && localDictionaryStatus[info.dictionary]) {
+            Object.assign(localDictionaryStatus[info.dictionary], info);
+        }
+        if (info?.lastLookup) localDictionaryStatus.lastLookup = info.lastLookup;
+        updateLocalDictionaryUi();
+    }
+
 
     function disposeLocalWorker(reason = '로컬 변환 작업이 중단되었습니다.') {
         if (localWorker) { localWorker.terminate(); localWorker = null; }
         if (localWorkerUrl) { URL.revokeObjectURL(localWorkerUrl); localWorkerUrl = null; }
         localReady = null;
+        for (const key of ['kuromoji', 'jmdict']) {
+            if (localDictionaryStatus[key].state === 'loading' || localDictionaryStatus[key].state === 'ready') {
+                localDictionaryStatus[key] = {state: 'idle', count: null, error: ''};
+            }
+        }
+        updateLocalDictionaryUi();
         for (const [id, job] of localJobs) {
             clearTimeout(job.timer);
             job.reject(new Error(reason));
@@ -994,43 +1030,239 @@
     }
 
     function makeLocalWorkerSource() {
-        // 이 함수의 문자열은 Worker 전용 전역에서 실행됩니다.
+        // 웹페이지 메인 스레드가 아닌 전용 Worker에서 사전 처리합니다.
         return `
           let enginePromise = null;
+          let supplementalPromise = null;
+          const status = info => self.postMessage({type: 'dictionary-status', info});
           const dictPath = ${JSON.stringify(LOCAL_DICT_URL)};
           const kuroshiroUrl = ${JSON.stringify(LOCAL_KUROSHIRO_URL)};
           const analyzerUrl = ${JSON.stringify(LOCAL_ANALYZER_URL)};
+          const HAN = /\\p{Script=Han}/u;
+          const isHan = text => HAN.test(String(text));
+          const hira = text => String(text).replace(/[\\u30a1-\\u30f6]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+          const validReading = text => typeof text === 'string' && text.length > 0 && text !== '*' && !isHan(text);
+          const readingOf = token => {
+            const surface = String(token.surface_form || '');
+            const pronunciation = token.pronunciation;
+            const reading = token.reading;
+            if (validReading(pronunciation)) return hira(pronunciation);
+            if (validReading(reading)) return hira(reading);
+            return isHan(surface) ? null : hira(surface);
+          };
           async function init() {
             if (!enginePromise) enginePromise = (async () => {
+              status({dictionary:'kuromoji', state:'loading', error:''});
               importScripts(kuroshiroUrl, analyzerUrl);
               const ke = self.Kuroshiro;
               const ae = self.KuromojiAnalyzer;
               const K = typeof ke === 'function' ? ke : ke && ke.default;
               const A = typeof ae === 'function' ? ae : ae && ae.default;
-              if (typeof K !== 'function' || typeof A !== 'function') {
-                throw new Error('Worker에서 Kuroshiro/KuromojiAnalyzer를 불러오지 못했습니다.');
-              }
+              if (typeof K !== 'function' || typeof A !== 'function') throw new Error('일본어 분석기를 불러오지 못했습니다.');
+              const analyzer = new A({dictPath});
               const engine = new K();
-              await engine.init(new A({dictPath}));
-              return engine;
-            })().catch(error => { enginePromise = null; throw error; });
+              await engine.init(analyzer);
+              status({dictionary:'kuromoji',state:'ready',error:''});
+              return analyzer;
+            })().catch(e => { enginePromise = null; status({dictionary:'kuromoji',state:'error',error:String(e?.message || e)}); throw e; });
             return enginePromise;
+          }
+          // 보조 사전의 네트워크 요청은 부모 Tampermonkey GM_xmlhttpRequest로 위임합니다.
+          // Worker 안에서 대용량 JSON 압축 해제/파싱/인덱싱을 수행합니다.
+          let remoteSequence = 0;
+          const remotePending = new Map();
+          function requestRemote(kind) {
+            return new Promise((resolve, reject) => {
+              const requestId = ++remoteSequence;
+              remotePending.set(requestId, {resolve, reject});
+              self.postMessage({type:'dictionary-network-request',requestId,kind});
+            });
+          }
+          async function fetchSupplemental() {
+            if (supplementalPromise) return supplementalPromise;
+            supplementalPromise = (async () => {
+              status({dictionary:'jmdict',state:'loading',error:'',count:null,phase:'릴리스 정보 요청'});
+              const metadata = await requestRemote('release');
+              const assets = Array.isArray(metadata.assets) ? metadata.assets : [];
+              const asset = assets.find(x => /^JmdictFurigana\.json\.gz$/i.test(x.name))
+                       || assets.find(x => /^JmdictFurigana\.json$/i.test(x.name));
+              if (!asset || !asset.browser_download_url) throw new Error('릴리스에서 JmdictFurigana JSON 파일을 찾지 못했습니다.');
+              status({dictionary:'jmdict',state:'loading',phase:'사전 다운로드',error:'',version:String(metadata.tag_name || ''),url:asset.browser_download_url});
+              const downloaded = await requestRemote('asset:' + asset.browser_download_url);
+              status({dictionary:'jmdict',state:'loading',phase:'압축 해제·JSON 분석',error:''});
+              const bytes = downloaded.buffer;
+              if (!(bytes instanceof ArrayBuffer) || !bytes.byteLength) throw new Error('사전 응답 본문이 비어 있습니다.');
+              let json;
+              if (/\.gz$/i.test(asset.name)) {
+                if (typeof DecompressionStream !== 'function') throw new Error('이 브라우저의 Worker는 gzip 압축 해제를 지원하지 않습니다.');
+                const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+                json = JSON.parse(await new Response(stream).text());
+              } else json = JSON.parse(new TextDecoder().decode(bytes));
+              if (!Array.isArray(json)) throw new Error('JMdictFurigana JSON 루트가 배열이 아닙니다.');
+              status({dictionary:'jmdict',state:'loading',phase:'읽기 검색 인덱스 구축',error:''});
+              const entries = new Map();
+              for (const item of json) {
+                if (!item || typeof item.text !== 'string' || !validReading(item.reading)) continue;
+                const key = item.text;
+                if (!isHan(key) || key.length > 20 || key.length < 2) continue;
+                if (!entries.has(key)) entries.set(key, []);
+                const choices = entries.get(key);
+                const value = hira(item.reading);
+                if (choices.length < 6 && !choices.includes(value)) choices.push(value);
+              }
+              status({dictionary:'jmdict',state:'ready',phase:'완료',count:entries.size,error:'',version:String(metadata.tag_name || ''),url:asset.browser_download_url});
+              return entries;
+            })().catch(err => { supplementalPromise = null; status({dictionary:'jmdict',state:'error',phase:'실패',error:String(err?.message || err),count:null}); throw err; });
+            return supplementalPromise;
+          }
+          function joinTokens(parts) {
+            let output = '';
+            let prev = null;
+            for (const part of parts) {
+              const surface = part.surface;
+              const punct = /^[、。，．！？!?…・「」『』（）()\\s]+$/u.test(surface);
+              const opening = /^[「『（(]+$/u.test(surface);
+              const isParticle = part.pos === '助詞' || part.pos === '助動詞';
+              const prevAttach = prev && (prev.pos === '助詞' || prev.pos === '助動詞' || prev.pos === '接頭詞');
+              const attach = !output || punct || opening || isParticle || prevAttach || (prev && prev.opening) || (part.pos === '接尾');
+              if (!attach && !/[\\s、。！？!?…]$/u.test(output)) output += ' ';
+              output += part.value;
+              prev = {...part, opening};
+            }
+            return output;
+          }
+          async function convertSegment(segment, analyzer) {
+            const tokens = await analyzer.parse(segment);
+            if (!Array.isArray(tokens) || !tokens.length) return segment;
+            const units = tokens.map(t => ({
+              surface: String(t.surface_form || ''), value: readingOf(t), pos: String(t.pos || '')
+            })).filter(t => t.surface);
+            // Kuromoji의 미등록 토큰이 복합어 중간을 잘랐을 수 있어
+            // 주변 토큰을 포함한 실제 표제어를 JMdict에서 다시 찾습니다.
+            if (units.some(t => t.value === null)) {
+              let lexicon = null;
+              try { lexicon = await fetchSupplemental(); }
+              catch (error) { status({lastLookup:'보조 사전 로드 실패: ' + String(error?.message || error)}); }
+              if (lexicon) {
+                for (let i = 0; i < units.length; i++) {
+                  if (units[i].value !== null) continue;
+                  let best = null;
+                  for (let start = Math.max(0, i - 3); start <= i; start++) {
+                    let surface = '';
+                    for (let end = start; end < Math.min(units.length, i + 5); end++) {
+                      surface += units[end].surface;
+                      if (surface.length > 20) break;
+                      if (end < i) continue;
+                      const readings = lexicon.get(surface);
+                      if (!readings || !readings.length) continue;
+                      // 주변 문맥으로 완벽하게 다의어를 결정할 수 없는 경우
+                      // 사전의 기본 읽기를 사용합니다. 임의 한자별 조합은 하지 않습니다.
+                      const scored = {start, end, reading: readings[0], size: surface.length};
+                      if (!best || scored.size > best.size) best = scored;
+                    }
+                  }
+                  status({lastLookup: best ? ('사전 일치: ' + units.slice(best.start,best.end+1).map(x=>x.surface).join('') + ' → ' + best.reading) : ('사전 검색 실패: ' + units[i].surface)});
+                  if (best) {
+                    units.splice(best.start, best.end - best.start + 1, {
+                      surface: units.slice(best.start, best.end + 1).map(x => x.surface).join(''),
+                      value: best.reading, pos: '名詞'
+                    });
+                    i = Math.max(-1, best.start - 1);
+                  }
+                }
+              }
+            }
+            for (const part of units) {
+              if (part.value === null) part.value = '〔미확인:' + part.surface + '〕';
+              if (part.pos === '助詞') {
+                if (part.surface === 'は') part.value = 'わ';
+                if (part.surface === 'へ') part.value = 'え';
+                if (part.surface === 'を') part.value = 'お';
+              }
+            }
+            return joinTokens(units);
           }
           self.onmessage = async event => {
             const {id, type, segments} = event.data;
-            try {
-              const engine = await init();
-              if (type === 'init') { self.postMessage({id, ok: true}); return; }
-              const results = [];
-              for (const segment of segments) {
-                results.push(await engine.convert(segment, {to: 'hiragana', mode: 'spaced'}));
+            if (type === 'dictionary-network-response') {
+              const job = remotePending.get(event.data.requestId);
+              if (job) {
+                remotePending.delete(event.data.requestId);
+                if (event.data.ok) job.resolve(event.data.data);
+                else job.reject(new Error(event.data.error || '사전 다운로드 실패'));
               }
+              return;
+            }
+            try {
+              const analyzer = await init();
+              if (type === 'init') { self.postMessage({id, ok: true}); return; }
+              if (type === 'supplemental') { await fetchSupplemental(); self.postMessage({id,ok:true}); return; }
+              const results = [];
+              for (const segment of segments) results.push(await convertSegment(segment, analyzer));
               self.postMessage({id, ok: true, results});
             } catch (error) {
               self.postMessage({id, ok: false, error: String(error?.message || error)});
             }
           };
         `;
+    }
+
+    // GitHub 요청은 Worker의 일반 fetch가 아닌 Tampermonkey 권한으로 수행합니다.
+    // 응답 데이터의 대용량 압축 해제와 인덱스 구축은 Worker에서만 실행합니다.
+    function gmDictionaryGet(url, binary = false) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET', url, anonymous: true,
+                responseType: binary ? 'arraybuffer' : 'text',
+                headers: binary ? {} : {Accept: 'application/vnd.github+json'},
+                timeout: 60000,
+                onload: response => {
+                    if (response.status < 200 || response.status >= 300) {
+                        reject(new Error(`HTTP ${response.status} — ${url}`)); return;
+                    }
+                    if (binary) {
+                        const bytes = response.response;
+                        if (!(bytes instanceof ArrayBuffer)) { reject(new Error(`바이너리 응답을 읽을 수 없습니다 — ${url}`)); return; }
+                        resolve({buffer: bytes});
+                    } else {
+                        try { resolve(JSON.parse(response.responseText)); }
+                        catch (error) { reject(new Error(`GitHub 릴리스 JSON 파싱 실패: ${error.message}`)); }
+                    }
+                },
+                onerror: () => reject(new Error(`네트워크 요청 실패 (Tampermonkey @connect 권한/접속 확인) — ${url}`)),
+                ontimeout: () => reject(new Error(`다운로드 제한 시간 초과 — ${url}`)),
+                onabort: () => reject(new Error(`다운로드 취소 — ${url}`))
+            });
+        });
+    }
+    async function serviceDictionaryRequest(worker, message) {
+        const requestId = message.requestId;
+        let phase = '';
+        try {
+            let data;
+            if (message.kind === 'release') {
+                phase = 'GitHub 릴리스 조회';
+                updateWorkerStatus({dictionary:'jmdict',state:'loading',phase});
+                data = await gmDictionaryGet('https://api.github.com/repos/Doublevil/JmdictFurigana/releases/latest');
+            } else if (typeof message.kind === 'string' && message.kind.startsWith('asset:')) {
+                phase = '사전 파일 다운로드';
+                const url = message.kind.slice(6);
+                const parsed = new URL(url);
+                if (parsed.protocol !== 'https:' || !(['github.com','objects.githubusercontent.com','release-assets.githubusercontent.com'].includes(parsed.hostname))) {
+                    throw new Error('허용되지 않은 사전 다운로드 주소입니다: ' + url);
+                }
+                updateWorkerStatus({dictionary:'jmdict',state:'loading',phase});
+                data = await gmDictionaryGet(url, true);
+            } else throw new Error('지원하지 않는 사전 다운로드 요청입니다.');
+            if (localWorker !== worker) return;
+            const transfer = data.buffer instanceof ArrayBuffer ? [data.buffer] : [];
+            worker.postMessage({type:'dictionary-network-response',requestId,ok:true,data}, transfer);
+        } catch (error) {
+            if (localWorker !== worker) return;
+            const detail = `${phase || '사전 요청'} 실패: ${error.message || error}`;
+            updateWorkerStatus({dictionary:'jmdict',state:'loading',phase,error:detail});
+            worker.postMessage({type:'dictionary-network-response',requestId,ok:false,error:detail});
+        }
     }
 
     function ensureLocalWorker() {
@@ -1043,6 +1275,11 @@
             throw new Error(`브라우저가 Web Worker 실행을 차단했습니다: ${error.message}. 이 사이트에서는 메인 스레드 로컬 변환을 실행하지 않습니다.`);
         }
         localWorker.onmessage = event => {
+            if (event.data?.type === 'dictionary-network-request') {
+                void serviceDictionaryRequest(localWorker, event.data);
+                return;
+            }
+            if (event.data?.type === 'dictionary-status') { updateWorkerStatus(event.data.info); return; }
             const {id, ok, results, error} = event.data || {};
             const job = localJobs.get(id);
             if (!job) return;
@@ -1097,7 +1334,10 @@
         return syllable;
     }
     function kanaToKorean(value) {
-        const text = String(value).replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0)-96));
+        const text = String(value)
+            .replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0)-96))
+            // 일본어 お단 + う는 통상 오 장음으로 표기합니다(とう→토오, きょう→쿄오).
+            .replace(/([おこそとのほもよろをごぞどぼぽょ])う/g, '$1お');
         let out = '';
         for (let i=0;i<text.length;) {
             const ch = text[i];
@@ -1124,7 +1364,9 @@
         const kanaResults = await localWorkerCall('convert', segments);
         return kanaResults.map(kana => {
             const hangul = formatPronunciation(kanaToKorean(kana));
-            if (!hangul || /[\u3400-\u9fff]/.test(hangul)) throw new Error('읽지 못한 한자가 포함되어 있습니다.');
+            if (!hangul) throw new Error('발음 변환 결과가 비어 있습니다.');
+            // 일부 단어의 읽기를 알 수 없더라도 나머지 문장 전체를 버리지 않습니다.
+            // 읽지 못한 한자는 원문 그대로 남겨 잘못된 추측 발음을 피합니다.
             return hangul;
         });
     }
@@ -1898,7 +2140,21 @@
                 <div class="section"><h3>발음 변환 방식</h3>
                     <label for="cfg-conversion-mode">변환 방식</label>
                     <select id="cfg-conversion-mode"><option value="api">AI API 변환 (Gemini / Firebase)</option><option value="local">로컬 변환 (API 없이)</option></select>
-                    <div id="local-controls"><p class="small">한자를 Kuromoji 사전으로 읽고 한글로 표기합니다. 최초 사용 시 CDN에서 사전을 가져옵니다. 고유명사나 예외적인 한자 읽기는 틀릴 수 있습니다.</p><button class="btn primary" id="test-local" type="button">로컬 변환 테스트</button><div class="result" id="local-test-result"></div></div>
+                    <div id="local-controls">
+                        <p class="small">Kuromoji가 기본 한자 읽기를 분석하고, 미등록 한자어가 있으면 JMdictFurigana 어휘 자료를 추가 조회합니다. 로드 상태는 현재 페이지의 Worker 기준입니다.</p>
+                        <h3>사전 로드 상태</h3><div class="result" id="local-dictionary-status" style="min-height:74px">Kuromoji: 미로드\nJMdictFurigana: 미로드\n최근 조회: 아직 조회하지 않음</div>
+                        <div class="row" style="margin-top:8px"><button class="btn" id="load-local-dictionaries" type="button">두 사전 로드 / 재시도</button><button class="btn primary" id="test-local" type="button">로컬 변환 테스트</button></div>
+                        <div class="result" id="local-test-result"></div>
+                        <h3 style="margin-top:15px">사용 라이브러리 및 사전 · 출처</h3>
+                        <div class="small" style="font-size:11px;line-height:1.8">
+                            <b>Kuroshiro 1.2.0</b> — MIT · <a href="https://github.com/hexenq/kuroshiro" target="_blank" rel="noopener noreferrer">프로젝트</a><br>
+                            <b>Kuroshiro Analyzer Kuromoji 1.1.0</b> — MIT · <a href="https://github.com/hexenq/kuroshiro-analyzer-kuromoji" target="_blank" rel="noopener noreferrer">프로젝트</a><br>
+                            <b>Kuromoji 0.1.2 사전</b> — Apache-2.0 · <a href="https://github.com/takuyaa/kuromoji.js" target="_blank" rel="noopener noreferrer">프로젝트</a><br>
+                            <b>JMdictFurigana</b> — Doublevil, 사전 데이터 CC BY-SA (JMdict/EDRDG 기반) · <a href="https://github.com/Doublevil/JmdictFurigana" target="_blank" rel="noopener noreferrer">프로젝트·저작자·라이선스</a><br>
+                            <b>JMdict</b> — Electronic Dictionary Research and Development Group (EDRDG) · <a href="https://www.edrdg.org/jmdict/j_jmdict.html" target="_blank" rel="noopener noreferrer">원본</a>
+                        </div>
+                        <p class="small">외부 사전은 최초 사용 시 내려받으며, 사전 데이터의 재배포·가공에는 해당 라이선스의 저작자표시 및 동일조건변경허락 요건이 적용될 수 있습니다.</p>
+                    </div>
                 </div>
                 <div id="api-controls"><div class="section">
                     <h3>Gemini 연결</h3>
@@ -2049,6 +2305,7 @@
     function updateConversionModeUi() {
         const local = settingsDraft.conversionMode === 'local';
         field('api-controls').style.display = local ? 'none' : '';
+        if (local) updateLocalDictionaryUi();
         field('local-controls').style.display = local ? '' : 'none';
     }
     function fillSettings() {
@@ -2129,6 +2386,12 @@
         });
         bindSimpleField('cfg-use-advanced', (el) => { settingsDraft.useAdvancedRules = el.checked; }, 'change');
         bindSimpleField('cfg-conversion-mode', (el) => { settingsDraft.conversionMode = el.value; updateConversionModeUi(); }, 'change');
+        field('load-local-dictionaries').addEventListener('click', async () => {
+            const button = field('load-local-dictionaries'); button.disabled = true;
+            try { await getLocalEngine(); await localWorkerCall('supplemental'); }
+            catch (error) { field('local-test-result').textContent = '사전 로드 실패: ' + error.message; }
+            finally { button.disabled = false; updateLocalDictionaryUi(); }
+        });
         field('test-local').addEventListener('click', async () => {
             const button = field('test-local'); button.disabled = true;
             field('local-test-result').textContent = '사전 초기화 중…';
