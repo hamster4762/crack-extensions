@@ -1455,7 +1455,7 @@
         <div id="highlight-layer"></div>
         <div id="tooltip" role="status" aria-live="polite"></div>
         <div id="mobile-dock" class="mobile-dock" hidden><button id="mobile-read" type="button" aria-label="선택한 일본어 발음 보기" title="일본어를 선택한 뒤 누르세요">발음</button><button id="mobile-settings" type="button" aria-label="일본어 발음 설정">⚙</button></div>
-        <section id="mobile-output" class="mobile-sheet" hidden aria-label="일본어 발음"><div class="mobile-sheet-head"><span>일본어 발음 · v1.3.1</span><button id="mobile-result-close" type="button" aria-label="발음 닫기">×</button></div><div id="mobile-source"></div><div id="mobile-result" role="status" aria-live="polite"></div></section>
+        <section id="mobile-output" class="mobile-sheet" hidden aria-label="일본어 발음"><div class="mobile-sheet-head"><span>일본어 발음 · v1.3.4</span><button id="mobile-result-close" type="button" aria-label="발음 닫기">×</button></div><div id="mobile-source"></div><div id="mobile-result" role="status" aria-live="polite"></div></section>
         <div id="panel" hidden>
             <div class="box" role="dialog" aria-modal="true" aria-label="일본어 발음 호버 설정">
                 <div class="head"><div class="title">🗣️ 일본어 발음 호버 설정</div><div class="status" id="save-status"></div><button class="iconbtn" id="close" type="button" aria-label="닫기">×</button></div>
