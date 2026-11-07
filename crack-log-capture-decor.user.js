@@ -674,7 +674,7 @@
         .page{position:absolute;left:0;top:0;transform-origin:top left;background-color:var(--paper-color,#fff);background-repeat:repeat;box-shadow:0 3px 8px #19231314,0 18px 45px #1923130d;color:var(--body-color,#333);--body-font:"Noto Serif KR","AppleMyungjo","Batang",serif}
         .page-body{position:relative;padding:var(--page-padding,24px);font:16px/1.85 var(--body-font);min-height:150px;overflow-wrap:anywhere}
         .log,.log *{user-select:text!important;-webkit-user-select:text!important}
-        .page-body{-webkit-touch-callout:none}
+        .page-body,.page-body *{-webkit-touch-callout:none!important}
         .message{position:relative;margin:0 0 24px;min-width:0}
         .message:last-child{margin-bottom:0}
         .role{display:block;width:fit-content;font:10px/1.6 var(--ui);letter-spacing:1px;color:var(--role-color,#8a9684);margin:0 0 10px}
@@ -858,7 +858,7 @@
         const $ = selector => d.querySelector(selector), $$ = selector => [...d.querySelectorAll(selector)];
         const page = $('#page'), messages = $('#messages'), layers = $('#layers'), stage = $('#stage');
         const controller = new AbortController();
-        let busy = false, activeItem = null, selectedRange = null, zoom = 1, fit = true, fontGeneration = 0, exported = false;
+        let busy = false, activeItem = null, selectedRange = null, zoom = 1, fit = true, fontGeneration = 0, exported = false, selectionPointer = '';
         let resultMarkup = '', resultHeight = 0, resultBlob = null, resultURL = '', markColor = '#efd67b', selectionTimer, historyTimer, noticeTimer, resizeTimer, outputGeneration = 0, zoomFrame = 0;
         const context = { families: new Set(), fontRoots: new WeakSet([document]), sheets: new Set([...document.styleSheets, ...(document.adoptedStyleSheets || [])]), notes: new Set() };
         const loadedFontRules = new Set(), fontPromises = new Map();
@@ -897,7 +897,6 @@
             resultMarkup = ''; resultBlob = null;
             context.cancelled = true;
             frame.remove(); editor = null; launch.hidden = false; launch.disabled = false; resourceCache.clear(); document.documentElement.style.overflow = previousOverflow;
-            for (const [id, font] of Object.entries(FONTS)) if (font.custom && !customFonts.some(item => item.id === id)) delete FONTS[id];
         }
         function updateZoom() {
             if (!frame.isConnected || zoomFrame) return;
@@ -988,6 +987,7 @@
         function historyButtons() { $('#undo').disabled = historyIndex <= 0; $('#redo').disabled = historyIndex >= history.length - 1; }
         function restore(index) {
             const state = JSON.parse(history[index]); Object.assign(config, state.config); messages.innerHTML = state.messages; layers.innerHTML = state.items;
+            if (!FONTS[config.font]) config.font = 'source';
             historyIndex = index; exported = false; deselectItem(); selectedRange = null; w.getSelection()?.removeAllRanges(); render(); historyButtons(); prepareFont(config.font);
         }
         function closePanels() { $$('.popover').forEach(panel => { panel.hidden = true; }); $$('[data-panel]').forEach(button => button.setAttribute('aria-expanded', 'false')); }
@@ -1033,6 +1033,7 @@
                     if (!blocks.length) throw new Error('폰트 파일 URL 또는 @font-face CSS를 입력해주세요.');
                 }
                 const rules = (await Promise.all(blocks.map(block => embeddedFont(block, text, font.custom ? `Rokku_${font.custom.id}` : '')))).filter(Boolean);
+                if (!record && font.custom && !FONTS[id]) return;
                 if (!rules.length) throw new Error('입력한 CSS에서 사용할 수 있는 글꼴을 찾지 못했습니다.');
                 const fresh = rules.filter(rule => !loadedFontRules.has(rule));
                 if (fresh.length) { $('#loaded-fonts').appendChild(d.createTextNode(fresh.join('\n'))); fresh.forEach(rule => loadedFontRules.add(rule)); }
@@ -1058,8 +1059,14 @@
                 on(remove, 'click', () => {
                     try {
                         const next = customFonts.filter(item => item.id !== record.id); GM_setValue(FONT_KEY, next); customFonts = next;
-                        // Keep the in-memory face for undo until the editor closes.
-                        FONTS[record.id].group = '이번 작업'; fontOptions();
+                        ++fontGeneration; $('#font-status').textContent = '';
+                        delete FONTS[record.id];
+                        for (const key of fontPromises.keys()) if (key.startsWith(`${record.id}:`)) fontPromises.delete(key);
+                        const family = JSON.stringify(`Rokku_${record.id}`);
+                        for (const rule of loadedFontRules) if (rule.includes(family)) loadedFontRules.delete(rule);
+                        for (const node of [...$('#loaded-fonts').childNodes]) if (node.textContent.includes(family)) node.remove();
+                        if (config.font === record.id) { config.font = 'source'; render(); commit(); }
+                        fontOptions();
                     } catch (error) { notify(`글꼴 목록을 변경하지 못했습니다. ${error.message}`, true); }
                 });
                 row.append(name, remove); $('#font-library').appendChild(row);
@@ -1355,8 +1362,16 @@
         on($('#item-back'), 'click', () => { if (activeItem) { layers.prepend(activeItem); commit(); } });
         on($('#item-delete'), 'click', () => { activeItem?.remove(); deselectItem(); commit(); }); on($('#item-deselect'), 'click', deselectItem);
         on(d, 'selectionchange', () => { clearTimeout(selectionTimer); selectionTimer = setTimeout(selection, 180); });
+        on($('#page-body'), 'pointerdown', event => { selectionPointer = event.pointerType; });
+        on($('#page-body'), 'contextmenu', event => {
+            if (event.pointerType !== 'touch' && selectionPointer !== 'touch') return;
+            const value = w.getSelection();
+            if (!value?.rangeCount || value.isCollapsed || !$('#page-body').contains(value.anchorNode)) return;
+            event.preventDefault();
+            clearTimeout(selectionTimer); selectionTimer = setTimeout(selection, 0);
+        });
         on($('#page-body'), 'pointerup', () => { clearTimeout(selectionTimer); selectionTimer = setTimeout(selection, 80); });
-        on($('#selection-menu'), 'pointerdown', event => { if (event.pointerType === 'mouse') event.preventDefault(); });
+        on($('#selection-menu'), 'pointerdown', event => event.preventDefault());
         $$('[data-mark-color]').forEach(button => on(button, 'click', () => { markColor = button.dataset.markColor; selectButtons($('#selection-menu'), '[data-mark-color]', markColor, 'markColor'); }));
         $$('[data-mark-action]').forEach(button => on(button, 'click', () => {
             if (!selectedRange) return; const action = button.dataset.markAction;
