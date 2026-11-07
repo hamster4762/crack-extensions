@@ -369,22 +369,41 @@
         return false;
     }
     function paragraphUnits(bubble) {
+        const units = [];
+        let text = [];
+        function flush() {
+            const first = text.find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+            if (first) units.push({ node: first, nodes: text });
+            text = [];
+        }
         function visit(node) {
-            if (node.nodeType !== Node.ELEMENT_NODE || node.matches('script,style,link,button,input,textarea,select')) return [];
+            if (node.nodeType === Node.TEXT_NODE) { text.push(node); return; }
+            if (node.nodeType !== Node.ELEMENT_NODE || node.matches('script,style,link,button,input,textarea,select')) return;
             const style = getComputedStyle(node);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return [];
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return;
+            const codeBlock = node.matches('.not-wrtn-markdown,.wrtn-codeblock') && node.querySelector('pre,code');
+            if (!node.shadowRoot && (codeBlock || node.matches('pre,table,hr,img,svg,canvas,video,iframe'))) {
+                flush();
+                if (node.getClientRects().length) units.push({ node, nodes: [node] });
+                return;
+            }
+            if (node.localName === 'br') { text.push(node); return; }
+            const boundary = node.shadowRoot || node.matches('p,div,section,article,li,h1,h2,h3,h4,h5,h6') || ['block', 'flex', 'grid', 'list-item'].includes(style.display);
+            if (boundary) flush();
             const assigned = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
             const children = assigned.length ? assigned : node.shadowRoot ? [...node.shadowRoot.childNodes] : [...node.childNodes];
-            const codeBlock = node.matches('.not-wrtn-markdown,.wrtn-codeblock') && node.querySelector('pre,code');
-            const textParagraph = node.matches('p') && node.textContent.trim() && ![...node.querySelectorAll('*')].some(child => child.shadowRoot);
-            if (!node.shadowRoot && (codeBlock || textParagraph || node.matches('pre,li,h1,h2,h3,h4,h5,h6,hr,img,table,svg,canvas,video,iframe'))) return node.getClientRects().length ? [node] : [];
-            const units = children.flatMap(visit);
-            if (units.length) return units;
-            if (node !== bubble && !node.shadowRoot && (node.matches('p,div,section,article') || node.parentNode instanceof ShadowRoot) && node.getClientRects().length && node.textContent.trim()) return [node];
-            return [];
+            children.forEach(visit);
+            if (boundary) flush();
         }
-        const units = visit(bubble);
-        return units.length ? units : [bubble];
+        visit(bubble); flush();
+        return units;
+    }
+    function paragraphRects(unit) {
+        return unit.nodes.flatMap(node => {
+            if (node.nodeType !== Node.TEXT_NODE) return [...node.getClientRects()];
+            const range = node.ownerDocument.createRange(); range.selectNodeContents(node);
+            return [...range.getClientRects()];
+        }).filter(rect => rect.width > 0 && rect.height > 0);
     }
 
     let picking = null;
@@ -440,15 +459,22 @@
         const outline = document.createElement('div'); outline.style.cssText = 'position:fixed;pointer-events:none;border:2px solid #76906c;border-radius:8px;z-index:2147483646;background:#96ac8012;display:none;';
         document.body.append(hud, outline); picking = { controller, hud, outline, start: null, hover: null };
         const positionOutline = () => {
-            const target = picking?.hover?.node || picking?.start?.node;
-            if (!target?.isConnected) { outline.style.display = 'none'; return; }
-            const rect = target.getBoundingClientRect(); Object.assign(outline.style, { display: 'block', left: `${rect.left - 3}px`, top: `${rect.top - 3}px`, width: `${rect.width + 6}px`, height: `${rect.height + 6}px` });
+            const target = picking?.hover || picking?.start;
+            if (!target?.node.isConnected) { outline.style.display = 'none'; return; }
+            const rects = paragraphRects(target.unit);
+            if (!rects.length) { outline.style.display = 'none'; return; }
+            const left = Math.min(...rects.map(rect => rect.left)), top = Math.min(...rects.map(rect => rect.top));
+            const right = Math.max(...rects.map(rect => rect.right)), bottom = Math.max(...rects.map(rect => rect.bottom));
+            Object.assign(outline.style, { display: 'block', left: `${left - 3}px`, top: `${top - 3}px`, width: `${right - left + 6}px`, height: `${bottom - top + 6}px` });
         };
         const targetFromEvent = event => {
             const path = event.composedPath(), bubble = path.find(node => node.nodeType === Node.ELEMENT_NODE && node.matches?.(BUBBLE));
             if (!bubble) return null;
-            const node = mode === 'block' ? bubble : paragraphUnits(bubble).find(unit => path.some(target => target.nodeType === Node.ELEMENT_NODE && (unit === target || unit.contains(target))));
-            return node ? { node, bubble } : null;
+            if (mode === 'block') return { node: bubble, unit: { node: bubble, nodes: [bubble] }, bubble };
+            const units = paragraphUnits(bubble);
+            const unit = units.find(unit => unit.nodes.length === 1 && unit.node.nodeType === Node.ELEMENT_NODE && path.some(target => target.nodeType === Node.ELEMENT_NODE && (unit.node === target || unit.node.contains(target)))) ||
+                units.find(unit => paragraphRects(unit).some(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom));
+            return unit ? { node: unit.node, unit, bubble } : null;
         };
         document.addEventListener('pointermove', event => { if (!picking) return; picking.hover = targetFromEvent(event); positionOutline(); }, { signal: controller.signal });
         window.addEventListener('scroll', positionOutline, { passive: true, capture: true, signal: controller.signal });
@@ -459,14 +485,14 @@
             if (!target) return;
             event.preventDefault(); event.stopImmediatePropagation();
             if (!picking.start) { picking.start = target; label.textContent = `끝 ${unitLabel}을 선택하세요`; positionOutline(); return; }
-            const all = bubbles().flatMap(bubble => (mode === 'block' ? [bubble] : paragraphUnits(bubble)).map(node => ({ node, bubble })));
+            const all = bubbles().flatMap(bubble => (mode === 'block' ? [{ node: bubble, nodes: [bubble] }] : paragraphUnits(bubble)).map(unit => ({ ...unit, bubble })));
             const start = all.findIndex(unit => unit.node === picking.start.node), end = all.findIndex(unit => unit.node === target.node);
             if (start < 0 || end < 0) { stopPicking(); alert('선택한 대화가 화면에서 사라졌습니다. 로딩된 대화 구간을 다시 선택해주세요.'); return; }
             const selected = [];
             for (const unit of all.slice(Math.min(start, end), Math.max(start, end) + 1)) {
                 let entry = selected[selected.length - 1];
                 if (!entry || entry.bubble !== unit.bubble) { entry = { bubble: unit.bubble, units: mode === 'paragraph' ? [] : null }; selected.push(entry); }
-                entry.units?.push(unit.node);
+                entry.units?.push(...unit.nodes);
             }
             stopPicking(); launch.disabled = true;
             try { await openEditor(selected); }
