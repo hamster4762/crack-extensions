@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.1.1
+// @version      1.1.2
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -893,7 +893,7 @@
         .output-details{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;margin-top:15px}
         .output-details .status-text{min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
         .result-preview{height:310px;background:#e8ede2;border-radius:8px;padding:12px;display:flex;align-items:center;justify-content:center}
-        .result-preview img{display:block;max-width:100%;max-height:100%;object-fit:contain}
+        .result-preview canvas{display:block;max-width:100%;max-height:100%;object-fit:contain}
         .number{width:60px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink)}
         .library-row{display:flex;gap:9px;align-items:center;padding-top:10px;font-size:11px;color:#869778}
         .library-row span{flex:1;overflow-wrap:anywhere}
@@ -1649,10 +1649,20 @@
                 catch (error) { reject(new Error(`이미지 변환 실패: ${error.message}`)); }
             });
         }
-        async function encodedOutput(format, generation) {
+        async function encodedOutput(format, generation, preview = null) {
             const factor = clamp($('#output-scale').value, 50, 200) / 100;
             const canvas = await rasterize(Math.max(1, Math.round(width * factor)), Math.max(1, Math.round(resultHeight * factor)), generation);
-            try { return await encode(canvas, format); }
+            try {
+                if (preview) {
+                    const scale = Math.min(1, 380 / canvas.width, 380 / canvas.height);
+                    preview.width = Math.max(1, Math.round(canvas.width * scale));
+                    preview.height = Math.max(1, Math.round(canvas.height * scale));
+                    const drawing = preview.getContext('2d');
+                    if (!drawing) throw new Error('미리보기 그리기를 초기화하지 못했습니다.');
+                    drawing.drawImage(canvas, 0, 0, preview.width, preview.height);
+                }
+                return await encode(canvas, format);
+            }
             finally { canvas.width = canvas.height = 1; }
         }
         let outputTask = null, resultGeneration = -1;
@@ -1671,12 +1681,15 @@
                 $('#output-scale-value').textContent = `${Math.round(factor * 100)}%`;
                 outputTask = (async () => {
                     try {
-                        const blob = await encodedOutput(format, generation);
+                        const preview = $('#result-preview').querySelector('canvas') ? null : d.createElement('canvas');
+                        const blob = await encodedOutput(format, generation, preview);
                         if (!frame.isConnected || generation !== outputGeneration) return;
                         if (format === 'webp' && blob.type !== 'image/webp') { $('#output-format').value = 'png'; notify('이 브라우저가 WebP를 지원하지 않아 PNG로 준비했습니다.'); }
                         resultBlob = blob; resultGeneration = generation;
                         if (resultURL) URL.revokeObjectURL(resultURL); resultURL = URL.createObjectURL(blob);
-                        const preview = d.createElement('img'); preview.src = resultURL; preview.alt = '저장할 이미지'; $('#result-preview').replaceChildren(preview);
+                        if (preview) {
+                            preview.setAttribute('role', 'img'); preview.setAttribute('aria-label', '저장할 이미지'); $('#result-preview').replaceChildren(preview);
+                        }
                         $('#output-size').textContent = `${Math.round(width * factor)} × ${Math.round(resultHeight * factor)} · ${(blob.size / 1048576).toFixed(1)} MB`;
                     } catch (error) { if (frame.isConnected && generation === outputGeneration) throw error; }
                 })();
