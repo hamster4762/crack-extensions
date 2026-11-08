@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.1.0
+// @version      1.1.1
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -131,13 +131,36 @@
         if (!blob?.size) throw new Error('빈 리소스가 반환되었습니다.');
         return blobData(blob);
     }
-    async function replaceURLs(value, base, useGM = false) {
+    async function imageDataResource(url) {
+        try { return await dataResource(url, true); }
+        catch (directError) {
+            const source = new URL(url, location.href);
+            if (!/^https?:$/.test(source.protocol) || /\.svg$/i.test(source.pathname) || source.hostname === 'wsrv.nl') throw directError;
+            const key = `image-proxy:${source.href}`;
+            if (!resourceCache.has(key)) {
+                const pending = (async () => {
+                    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 20000);
+                    try {
+                        const response = await fetch(`https://wsrv.nl/?url=${encodeURIComponent(source.href)}&output=png`, { credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal });
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        const blob = await response.blob();
+                        if (!blob.size || !blob.type.startsWith('image/')) throw new Error('이미지 데이터가 아닌 응답');
+                        return await blobData(blob);
+                    } catch (error) { throw new Error(`${directError.message} / 이미지 프록시 요청이 실패했습니다 (${error.name === 'AbortError' ? '20초 시간 초과' : error.message})`); }
+                    finally { clearTimeout(timer); }
+                })();
+                resourceCache.set(key, pending.catch(error => { resourceCache.delete(key); throw error; }));
+            }
+            return resourceCache.get(key);
+        }
+    }
+    async function replaceURLs(value, base, useGM = false, imageProxy = false) {
         const matches = [...value.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)];
         let result = value;
         for (const match of matches) {
             if (!match[2] || match[2].startsWith('#')) continue;
             const url = new URL(match[2], base).href;
-            const data = await dataResource(url, useGM);
+            const data = await (imageProxy ? imageDataResource(url) : dataResource(url, useGM));
             result = result.replace(match[0], `url("${data}")`);
         }
         return result;
@@ -634,7 +657,7 @@
         for (const image of root.querySelectorAll('img')) {
             if (!image.getClientRects().length) continue;
             if (!image.getAttribute('src')) continue;
-            image.src = await dataResource(image.src, true);
+            image.src = await imageDataResource(image.src);
             image.removeAttribute('srcset'); image.removeAttribute('sizes');
             try { await image.decode(); } catch { throw new Error('이미지를 해석하지 못했습니다. 이미지 표시를 끄거나 해당 구간을 제외해주세요.'); }
         }
@@ -642,11 +665,11 @@
             if (!element.getClientRects().length) continue;
             for (const property of ['background-image', 'mask-image']) {
                 const value = element.style.getPropertyValue(property);
-                if (value && /url\(/i.test(value)) element.style.setProperty(property, await replaceURLs(value, location.href, true));
+                if (value && /url\(/i.test(value)) element.style.setProperty(property, await replaceURLs(value, location.href, true, true));
             }
             if (element.namespaceURI === 'http://www.w3.org/2000/svg' && element.localName === 'image') {
                 const url = element.getAttribute('href') || element.getAttribute('xlink:href');
-                if (url && !url.startsWith('#')) { element.setAttribute('href', await dataResource(new URL(url, location.href).href, true)); element.removeAttribute('xlink:href'); }
+                if (url && !url.startsWith('#')) { element.setAttribute('href', await imageDataResource(new URL(url, location.href).href)); element.removeAttribute('xlink:href'); }
             }
         }
     }
