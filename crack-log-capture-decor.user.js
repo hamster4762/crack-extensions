@@ -1643,8 +1643,17 @@
             } else throw new Error('지원하지 않는 이미지 형식입니다.');
             return new Blob(parts, { type: blob.type });
         }
+        function outputSizeWarning(format, pixelWidth, pixelHeight) {
+            const limit = format === 'webp' ? 16383 : 65535;
+            if (pixelWidth <= limit && pixelHeight <= limit) return '';
+            return format === 'webp'
+                ? 'WebP는 한 변이 16,383px를 넘으면 잘립니다. PNG를 선택해주세요.'
+                : 'PNG도 한 변이 65,535px를 넘으면 잘립니다. 이미지 배율을 낮춰주세요.';
+        }
         function encode(canvas, format) {
             return new Promise((resolve, reject) => {
+                const warning = outputSizeWarning(format, canvas.width, canvas.height);
+                if (warning) { reject(new Error(warning)); return; }
                 try { canvas.toBlob(blob => blob?.size ? resolve(stripMetadata(blob)) : reject(new Error('이미지 인코딩에 실패했습니다. PNG 형식 또는 더 낮은 배율로 저장해주세요.')), format === 'webp' ? 'image/webp' : 'image/png', .94); }
                 catch (error) { reject(new Error(`이미지 변환 실패: ${error.message}`)); }
             });
@@ -1679,6 +1688,8 @@
                 const format = $('#output-format').value;
                 const factor = clamp($('#output-scale').value, 50, 200) / 100;
                 $('#output-scale-value').textContent = `${Math.round(factor * 100)}%`;
+                const warning = outputSizeWarning(format, Math.round(width * factor), Math.round(resultHeight * factor));
+                if (warning) { $('#output-size').textContent = warning; return null; }
                 outputTask = (async () => {
                     try {
                         const preview = $('#result-preview').querySelector('canvas') ? null : d.createElement('canvas');
@@ -1735,7 +1746,11 @@
         on($('#export'), 'click', exportImage);
         const resizeOutput = () => { outputBlob().catch(error => { if (frame.isConnected) notify(error.message, true); }); };
         const scheduleOutput = () => {
-            ++outputGeneration; $('#output-size').textContent = '…'; clearTimeout(resizeTimer); resizeTimer = setTimeout(resizeOutput, 500);
+            ++outputGeneration; clearTimeout(resizeTimer);
+            const factor = clamp($('#output-scale').value, 50, 200) / 100;
+            const warning = outputSizeWarning($('#output-format').value, Math.round(width * factor), Math.round(resultHeight * factor));
+            $('#output-size').textContent = warning || '…';
+            if (!warning) resizeTimer = setTimeout(resizeOutput, 500);
         };
         on($('#output-format'), 'change', scheduleOutput);
         on($('#output-scale'), 'input', event => {
