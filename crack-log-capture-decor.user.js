@@ -780,6 +780,10 @@
         .upload svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6}
         .wide{width:100%;margin-top:14px}
         .theme-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 10px}
+        .theme-tile{position:relative;min-width:0}
+        .theme-tile .theme-card{width:100%}
+        .theme-delete{position:absolute;right:3px;top:3px;display:flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:#fffefa;color:#7c4d45;font-size:10px}
+        .theme-delete svg{width:14px;height:14px}
         .theme-card{display:flex;flex-direction:column;gap:7px;min-width:0;text-align:left;font-size:11px;color:var(--ink)}
         .theme-card>span:last-child{width:100%;overflow-wrap:anywhere}
         .theme-sample{display:flex;flex-direction:column;justify-content:center;gap:5px;width:100%;height:86px;padding:10px 12px;overflow:hidden;border:1px solid var(--line);border-radius:7px;background-repeat:repeat}
@@ -955,9 +959,7 @@
         const defaultThemes = [
             { name: '미지정 · 원문 유지', settings: { ...themeDefaults } },
             { name: '크림 노트', settings: { ...themeDefaults, paper: '#fff8e6', pattern: 'ruled', patternColor: '#b6a084', patternOpacity: .5, font: 'serif', narrationColor: '#7b7063', dialogueColor: '#3f362d', showRoles: false, padding: 50 } },
-            { name: '숲속 기록', settings: { ...themeDefaults, paper: '#edf2e9', pattern: 'dots', patternColor: '#91ac98', patternOpacity: .65, font: 'batang', narrationColor: '#647963', dialogueColor: '#304631', divider: 'diamond', lineHeight: 1.7 } },
             { name: '장미 편지', settings: { ...themeDefaults, paper: '#f7e9e5', pattern: 'plain', patternColor: '#cd9f8b', font: 'batang', narrationColor: '#98736f', dialogueColor: '#593b40', divider: 'double', showRoles: false, padding: 54 } },
-            { name: '푸른 격자', settings: { ...themeDefaults, paper: '#f2f6fb', pattern: 'grid', patternColor: '#9eb9d4', patternOpacity: .55, font: 'sans', narrationColor: '#71849b', dialogueColor: '#32485e', divider: 'dashed', letterSpacing: 0 } },
             { name: '밤의 서재', settings: { ...themeDefaults, paper: '#17191c', pattern: 'grain', patternColor: '#91ac98', patternOpacity: .4, font: 'serif', narrationColor: '#a3a3a8', dialogueColor: '#f4f2ed', divider: 'line', lineHeight: 1.7, padding: 50 } },
         ];
         const themeCards = new Map();
@@ -1195,7 +1197,22 @@
                     const name = d.createElement('span'); name.textContent = theme.name;
                     sample.append(role, text, narration); button.append(sample, name);
                     button.setAttribute('aria-pressed', String(THEME_KEYS.every(key => config[key] === value[key])));
-                    on(button, 'click', () => applyTheme(theme)); themeCards.set(button, value); container.appendChild(button);
+                    on(button, 'click', () => applyTheme(theme)); themeCards.set(button, value);
+                    if (themes === customThemes) {
+                        const tile = d.createElement('div'); tile.className = 'theme-tile';
+                        const remove = d.createElement('button'); remove.type = 'button'; remove.className = 'theme-delete';
+                        remove.innerHTML = icon('trash'); remove.setAttribute('aria-label', `${theme.name} 삭제`); remove.title = '삭제';
+                        let confirming = false;
+                        on(remove, 'blur', () => { confirming = false; remove.innerHTML = icon('trash'); remove.setAttribute('aria-label', `${theme.name} 삭제`); remove.title = '삭제'; });
+                        on(remove, 'click', () => {
+                            if (!confirming) { confirming = true; remove.textContent = '삭제할까요?'; remove.setAttribute('aria-label', `${theme.name} 삭제할까요?`); remove.title = '한 번 더 누르면 삭제됩니다'; return; }
+                            try {
+                                const next = customThemes.filter(item => item.id !== theme.id);
+                                GM_setValue(THEME_KEY, next); customThemes = next; themeChoices();
+                            } catch (error) { notify(`테마를 삭제하지 못했습니다. ${error.message}`, true); }
+                        });
+                        tile.append(button, remove); container.appendChild(tile);
+                    } else container.appendChild(button);
                 }
             }
         }
