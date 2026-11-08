@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.1.2
+// @version      1.1.3
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
