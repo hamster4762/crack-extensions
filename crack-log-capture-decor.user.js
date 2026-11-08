@@ -1739,7 +1739,7 @@
                 await nextFrame(); await nextFrame();
                 resultHeight = Math.ceil(capture.scrollHeight); resultMarkup = snapshotCapture(capture);
                 capture.remove(); capture = null;
-                $('#output-scale').value = 100; ++outputGeneration; await outputBlob(); showDialog($('#result-dialog'));
+                $('#output-scale').value = 150; ++outputGeneration; await outputBlob(); showDialog($('#result-dialog'));
             } catch (error) { resultMarkup = ''; if (frame.isConnected) notify(`이미지를 만들지 못했습니다. ${error.message}`, true); }
             finally { capture?.remove(); if (frame.isConnected) setBusy(false); }
         }
