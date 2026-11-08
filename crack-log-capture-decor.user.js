@@ -11,6 +11,7 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @connect      self
+// @connect      crack-api.wrtn.ai
 // @connect      fonts.googleapis.com
 // @connect      fonts.gstatic.com
 // @connect      fe-web-assets.static.wrtn.ai
@@ -18,7 +19,7 @@
 // @connect      wrtn-image-ai-character.static.wrtn.ai
 // @connect      cdn.jsdelivr.net
 // @connect      raw.githubusercontent.com
-// @connect      k.ak-rq.org
+// @connect      *
 // @updateURL    https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-log-capture-decor.user.js
 // @downloadURL  https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-log-capture-decor.user.js
 // ==/UserScript==
@@ -30,7 +31,6 @@
     const FONT_KEY = 'rokku_user_fonts_v1';
     const STICKER_KEY = 'rokku_user_stickers_v1';
     const MAX_HISTORY = 20;
-    const CONNECT_HOSTS = new Set(['fonts.googleapis.com', 'fonts.gstatic.com', 'fe-web-assets.static.wrtn.ai', 'build-assets.static.wrtn.ai', 'wrtn-image-ai-character.static.wrtn.ai', 'cdn.jsdelivr.net', 'raw.githubusercontent.com', 'k.ak-rq.org']);
     const ICONS = {
         capture: '<rect x="3" y="5" width="18" height="15" rx="3"/><path d="m8 5 1-3h6l1 3"/><circle cx="12" cy="12.5" r="4"/>',
         close: '<path d="m6 6 12 12M18 6 6 18"/>',
@@ -92,11 +92,6 @@
     async function requestResource(url, responseType = 'blob') {
         const parsed = new URL(url, location.href);
         if (!['http:', 'https:', 'data:', 'blob:'].includes(parsed.protocol)) throw new Error('지원하지 않는 리소스 주소입니다.');
-        if (/^https?:$/.test(parsed.protocol) && parsed.hostname !== location.hostname && !CONNECT_HOSTS.has(parsed.hostname)) {
-            const response = await fetch(parsed.href, { credentials: 'omit' }).catch(() => { throw new Error(`접근 허용 목록에 없는 리소스입니다. @connect에 호스트를 추가해주세요: ${parsed.hostname}`); });
-            if (!response.ok) throw new Error(`리소스 요청 실패 (${response.status}) · ${parsed.hostname}`);
-            return responseType === 'text' ? response.text() : response.blob();
-        }
         const key = `${responseType}:${parsed.href}`;
         if (!resourceCache.has(key)) {
             const promise = /^(data:|blob:)/.test(parsed.href)
@@ -209,7 +204,6 @@
             if (/^(UL|OL)$/.test(source.tagName)) { target.style.margin = '0 0 .8em'; target.style.padding = '0 0 0 1.5em'; }
             if (/^(PRE|TABLE)$/.test(source.tagName)) target.style.overflowX = 'auto';
         }
-        if (decorated && source.tagName === 'P' && !graphic) target.style.marginBottom = 'var(--log-paragraph-spacing, 1.2em)';
         if (styles.position === 'fixed') target.style.position = 'absolute';
     }
     function pseudoContent(value) {
@@ -296,7 +290,8 @@
         if (tag === 'pre' || node.matches('.wrtn-codeblock') || (node.matches('.not-wrtn-markdown') && node.querySelector('pre,code'))) {
             clone.dataset.rkCode = 'true';
             if (!node.parentElement?.closest('.wrtn-codeblock,.not-wrtn-markdown,pre')) {
-                clone.style.marginTop = clone.style.marginBottom = 'var(--log-paragraph-spacing, 1.2em)';
+                const decorated = node.getRootNode() instanceof ShadowRoot || !!node.shadowRoot;
+                if (!decorated) clone.style.marginTop = clone.style.marginBottom = 'var(--log-paragraph-spacing, 1.2em)';
             }
         }
         if (tag === 'hr') clone.dataset.rkSourceDivider = 'true';
@@ -641,7 +636,7 @@
             }
         }
     }
-    function patternTile(kind, color) {
+    function patternTile(kind, color, opacity = 1) {
         if (kind === 'plain') return '';
         const stroke = `stroke="${color}" stroke-opacity=".35" fill="none" stroke-width="1"`;
         const fill = `fill="${color}" fill-opacity=".2"`;
@@ -661,7 +656,7 @@
             size = 64;
             body = Array.from({ length: 64 }, (_, i) => `<circle cx="${(i * 29 + 7) % 64}" cy="${(i * 37 + 11) % 64}" r="${i % 3 ? .35 : .6}" fill="${color}" fill-opacity=".17"/>`).join('');
         }
-        return svgData(svg(body, size));
+        return svgData(svg(`<g opacity="${opacity}">${body}</g>`, size));
     }
     const STICKERS = {
         flower: { label: '꽃', group: '도형', body: '<g fill="#b5aacd"><ellipse cx="50" cy="27" rx="13" ry="20"/><ellipse cx="50" cy="27" rx="13" ry="20" transform="rotate(72 50 50)"/><ellipse cx="50" cy="27" rx="13" ry="20" transform="rotate(144 50 50)"/><ellipse cx="50" cy="27" rx="13" ry="20" transform="rotate(216 50 50)"/><ellipse cx="50" cy="27" rx="13" ry="20" transform="rotate(288 50 50)"/></g><circle cx="50" cy="50" r="12" fill="#f7e4a8"/>' },
@@ -802,8 +797,13 @@
         .item img{width:100%;height:100%;object-fit:contain;pointer-events:none}
         .item.selected{border:1px dashed #819c6e;border-radius:3px}
         .item:active{cursor:grabbing}
-        .item.text-box{height:auto!important;min-height:28px;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;justify-content:flex-start;font-family:var(--body-font);line-height:1.5;padding:0;background:none}
-        .item.text-box span{width:100%;pointer-events:none}
+        .item.text-box{height:auto!important;min-height:0;min-width:0;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;justify-content:flex-start;font-family:var(--body-font);line-height:1.5;padding:0;background:none}
+        .item.text-box>span:first-child{width:100%;pointer-events:none}
+        .text-resize{display:none;position:absolute;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none}
+        .selected>.text-resize{display:block}
+        .text-resize[data-side=left]{left:-5px}
+        .text-resize[data-side=right]{right:-5px}
+        .text-resize:after{content:"";position:absolute;left:3px;top:calc(50% - 7px);width:4px;height:14px;background:#76906c;border:1px solid #fff;border-radius:3px}
         .selection-menu{position:fixed;z-index:40;background:#fffefa;border:1px solid var(--line);border-radius:11px;padding:6px;box-shadow:0 5px 22px #29391e26;max-width:calc(100vw - 16px)}
         .selection-actions{display:flex;gap:1px}
         .selection-actions button{display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:center;width:56px;height:51px;font-size:10px;color:#66785a;border-radius:6px}
@@ -830,7 +830,7 @@
         .notice.error{border-color:#e4bdb4;color:#994a3a}
         .notice button{flex-shrink:0;width:22px;height:22px;padding:3px}
         .notice svg{width:16px;height:16px}
-        .busy{position:fixed;inset:0;display:grid;place-items:center;z-index:80;background:#eff3e8b0;backdrop-filter:blur(3px);font-size:13px;color:#5b7350}
+        .busy{position:fixed;inset:0;display:grid;place-items:center;z-index:80;background:#eff3e8;font-size:13px;color:#5b7350}
         .busy>div{padding:18px 24px;background:#fffefa;border:1px solid var(--line);border-radius:12px}
         .dialog{width:390px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 30px);overflow:auto;border:1px solid var(--line);border-radius:15px;padding:23px;background:#fffefa;color:var(--ink);box-shadow:0 20px 80px #14210b30}
         .dialog::backdrop{background:#24311c44;backdrop-filter:blur(3px)}
@@ -842,6 +842,8 @@
         #download,#copy-image{position:relative;padding-left:38px;padding-right:38px}
         #download[aria-busy=true]:after,#copy-image[aria-busy=true]:after{content:"";position:absolute;right:13px;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:output-spin .7s linear infinite}
         @keyframes output-spin{to{transform:rotate(360deg)}}
+        .output-details{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;margin-top:15px}
+        .output-details .status-text{min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
         .result-preview{height:310px;background:#e8ede2;border-radius:8px;padding:12px;display:flex;align-items:center;justify-content:center}
         .result-preview img{display:block;max-width:100%;max-height:100%;object-fit:contain}
         .number{width:60px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink)}
@@ -882,18 +884,18 @@
             <button class="icon floating save" id="export" aria-label="이미지 저장" title="이미지 저장">${icon('download')}</button>
             <div class="dock"><nav class="toolbar" aria-label="편집 도구">${tool('undo', '실행 취소')}${tool('redo', '다시 실행')}<span class="separator"></span>${tool('source', '대화')}${tool('paper', '배경')}${tool('font', '글자')}<span class="separator"></span>${tool('title', '제목')}${tool('sticker', '스티커')}${tool('text', '텍스트 상자')}</nav>
             <section class="popover" id="panel-source" hidden>${head('대화')}${toggle('show-user', '유저 입력')}${toggle('show-code', '코드블럭')}${toggle('show-images', '이미지')}${toggle('show-dividers', '가름선')}${toggle('show-roles', '역할명')}<div class="settings-section"><label class="field" for="user-label">유저 문구</label><input class="input" id="user-label" maxlength="60"><label class="field" for="character-label">캐릭터 문구</label><input class="input" id="character-label" maxlength="60"><div class="field" id="divider-label">가름선 디자인</div><div class="divider-options" id="divider-options" role="group" aria-labelledby="divider-label">${[['line', '실선'], ['double', '이중선'], ['dashed', '점선'], ['diamond', '다이아몬드']].map(([id, label]) => `<button type="button" class="divider-choice" data-divider-choice="${id}" data-divider="${id}" aria-pressed="false"><span class="divider-preview" aria-hidden="true"><span class="divider-sample"></span></span><span>${label}</span></button>`).join('')}</div></div></section>
-            <section class="popover" id="panel-paper" hidden>${head('배경')}<div class="pattern-grid" id="patterns"></div><div class="field">종이 색</div>${swatches('paper', ['#17191c', '#fff8e6', '#ffffff', '#edf2e9', '#f7e9e5'], '종이 색')}<fieldset id="pattern-colors"><legend class="field">무늬 색</legend>${swatches('pattern', ['#91ac98', '#9eb9d4', '#cd9f8b', '#b3a0c2', '#b6a084'], '무늬 색')}</fieldset><label class="upload">${icon('image')}배경 사진<input id="background-file" type="file" accept="image/*" hidden></label><button class="secondary wide" id="remove-background" hidden>사진 제거</button></section>
+            <section class="popover" id="panel-paper" hidden>${head('배경')}<div class="pattern-grid" id="patterns"></div><div class="field">종이 색</div>${swatches('paper', ['#17191c', '#fff8e6', '#ffffff', '#edf2e9', '#f7e9e5'], '종이 색')}<fieldset id="pattern-colors"><legend class="field">무늬 색</legend>${swatches('pattern', ['#91ac98', '#9eb9d4', '#cd9f8b', '#b3a0c2', '#b6a084'], '무늬 색')}${range('pattern-opacity', '무늬 농도', 0, 1, .05)}</fieldset><label class="upload">${icon('image')}배경 사진<input id="background-file" type="file" accept="image/*" hidden></label><button class="secondary wide" id="remove-background" hidden>사진 제거</button></section>
             <section class="popover" id="panel-font" hidden>${head('글자·간격·여백', `<button class="icon" id="reset-font" aria-label="글자·간격·여백 초기화" title="글자·간격·여백 초기화">${icon('reset')}</button>`)}<label class="field" for="font-family">본문 글꼴</label><div class="row"><select id="font-family" class="input"></select><button class="icon" id="add-font" aria-label="웹폰트 추가" title="웹폰트 추가">${icon('plus')}</button></div><div class="font-preview" id="font-preview">가나다라마바사 ABC 123</div><div class="status-text" id="font-status" role="status"></div>${textColor('narration', '지문 색')}${textColor('dialogue', '대사 색')}${range('font-size', '글자 크기', 12, 30, 1)}${range('letter-spacing', '자간', -.05, .15, .01)}${range('line-height', '줄 간격', 1.2, 2.8, .05)}${range('paragraph-spacing', '문단 간격', 0, 2.4, .05)}${range('page-padding', '종이 여백', 0, 80, 1)}</section>
             <section class="popover" id="panel-title" hidden>${head('제목')}<form id="title-form"><label class="field" for="title-value">제목</label><textarea id="title-value" class="input" rows="4" placeholder="제목 입력"></textarea><div class="row" style="margin-top:14px"><button class="secondary" id="remove-title" type="button">${icon('trash')}삭제</button><button class="primary" type="submit" style="flex:1">적용</button></div></form></section>
             <section class="popover" id="panel-sticker" hidden>${head('스티커')}<div class="tabs" id="sticker-tabs"></div><div class="stickers" id="stickers"></div><label class="upload wide">${icon('plus')}스티커 등록<input id="sticker-file" type="file" accept="image/*" hidden></label></section>
             <section class="popover" id="panel-text" hidden>${head('텍스트 상자')}<form id="text-form"><label class="field" for="text-value">내용</label><textarea class="input" id="text-value" rows="3" placeholder="텍스트 입력" required></textarea>${textColor('text', '글자색')}${range('text-size', '글자 크기', 12, 60, 1)}<button class="primary wide" id="text-apply" type="submit">추가</button><button class="secondary wide" id="new-text" type="button" hidden>새 텍스트 추가</button></form></section></div>
             <main class="stage" id="stage"><div class="sizer" id="sizer"><article class="page" id="page"><div class="page-body" id="page-body"><h1 class="heading" id="heading" hidden></h1><div id="messages"></div></div><div class="layers" id="layers"></div></article></div></main>
             <div class="zoom"><button class="icon" id="zoom-out" aria-label="축소">${icon('minus')}</button><button class="zoom-value" id="zoom-fit" title="화면 맞춤">100%</button><button class="icon" id="zoom-in" aria-label="확대">${icon('plus')}</button></div>
-            <div class="selection-menu" id="selection-menu" hidden role="toolbar" aria-label="선택한 텍스트 편집"><div class="selection-actions">${[['highlight', '형광펜'], ['underline', '밑줄'], ['mask', '가리기'], ['replace', '치환'], ['clear', '지우기']].map(([id, label]) => `<button data-mark-action="${id}">${icon(id === 'clear' ? 'eraser' : id)}${label}</button>`).join('')}</div><div class="selection-colors"><span>색상</span>${['#efd67b', '#a8c7a1', '#deb0bd', '#abc8df', '#c3b1dc'].map((color, i) => `<button class="swatch" data-mark-color="${color}" style="--color:${color}" aria-label="${color}" aria-pressed="${i === 0}"></button>`).join('')}<span class="selection-count" id="selection-count"></span></div></div>
+            <div class="selection-menu" id="selection-menu" hidden role="toolbar" aria-label="선택한 텍스트 편집"><div class="selection-actions">${[['highlight', '형광펜'], ['underline', '밑줄'], ['mask', '가리기'], ['replace', '치환'], ['clear', '지우기']].map(([id, label]) => `<button data-mark-action="${id}">${icon(id === 'clear' ? 'eraser' : id)}${label}</button>`).join('')}</div><div class="selection-colors"><span>색상</span>${['#efd67b', '#a8c7a1', '#deb0bd', '#abc8df', '#c3b1dc', '#246b65', '#354b87'].map((color, i) => `<button class="swatch" data-mark-color="${color}" style="--color:${color}" aria-label="${color}" aria-pressed="${i === 0}"></button>`).join('')}<span class="selection-count" id="selection-count"></span></div></div>
             <div class="item-controls" id="item-controls" hidden><label>크기<input id="item-size" type="range" min="32" max="240"></label><label>회전<input id="item-rotation" type="range" min="-180" max="180"></label><button class="icon" id="edit-text" aria-label="텍스트 편집" title="텍스트 편집" hidden>${icon('text')}</button><button class="icon" id="item-front" aria-label="앞으로" title="앞으로">${icon('front')}</button><button class="icon" id="item-back" aria-label="뒤로" title="뒤로">${icon('back')}</button><button class="icon" id="item-delete" aria-label="삭제" title="삭제">${icon('trash')}</button><button class="icon" id="item-deselect" aria-label="선택 해제">${icon('close')}</button></div>
             <dialog class="dialog" id="replace-dialog"><form id="replace-form"><div class="dialog-head"><h2>치환</h2><button class="icon" type="button" data-close-dialog aria-label="닫기">${icon('close')}</button></div><div class="quote" id="replace-original"></div><label class="field" for="replace-value">바꿀 말</label><input class="input" id="replace-value" autocomplete="off"><label class="check"><input id="replace-all" type="checkbox">같은 말 모두 바꾸기</label><button class="primary wide" type="submit">적용</button></form></dialog>
             <dialog class="dialog" id="font-dialog"><div class="dialog-head"><h2>웹폰트 추가</h2><button class="icon" data-close-dialog aria-label="닫기">${icon('close')}</button></div><form id="font-form"><label class="field" for="font-name">이름</label><input class="input" id="font-name" required maxlength="60"><label class="field" for="font-source">폰트 파일 URL 또는 @font-face</label><textarea class="input" id="font-source" rows="4" required placeholder="https://…/font.woff2"></textarea><button class="primary wide" id="font-submit" type="submit">추가·적용</button><div class="status-text" id="font-form-status" role="status"></div></form><div id="font-library"></div></dialog>
-            <dialog class="dialog result" id="result-dialog"><div class="dialog-head"><h2>이미지 저장</h2><button class="icon" data-close-dialog aria-label="닫기">${icon('close')}</button></div><div class="result-preview" id="result-preview"></div>${range('output-scale', '이미지 크기', 50, 200, 5)}<div class="row" style="margin-top:15px"><select class="input" id="output-format"><option value="webp">WebP · 용량 절약</option><option value="png">PNG · 무손실</option></select><span class="status-text" id="output-size"></span></div><button class="primary wide" id="download">${icon('download')}이미지 저장</button><button class="secondary wide" id="copy-image">클립보드 복사</button></dialog>
+            <dialog class="dialog result" id="result-dialog"><div class="dialog-head"><h2>이미지 저장</h2><button class="icon" data-close-dialog aria-label="닫기">${icon('close')}</button></div><div class="result-preview" id="result-preview"></div>${range('output-scale', '이미지 크기', 50, 200, 5)}<div class="output-details"><select class="input" id="output-format"><option value="webp">WebP · 용량 절약</option><option value="png">PNG · 무손실</option></select><span class="status-text" id="output-size"></span></div><button class="primary wide" id="download">${icon('download')}이미지 저장</button><button class="secondary wide" id="copy-image">클립보드 복사</button></dialog>
             <div class="notice" id="notice" hidden popover="manual" role="status"><span id="notice-value"></span><button data-dismiss-notice aria-label="알림 닫기">${icon('close')}</button></div><div class="busy" id="busy" hidden><div id="busy-value">준비 중…</div></div>
             </body></html>`;
     }
@@ -922,7 +924,7 @@
         const sourceInk = compatibleColors(getComputedStyle(entries[0].bubble).color, context);
         const baseFontSize = 16, originalLineHeight = 1.5, width = 760;
         const config = {
-            paper: null, narrationColor: null, dialogueColor: null, pattern: 'plain', patternColor: '#8f9d91', photo: '',
+            paper: null, narrationColor: null, dialogueColor: null, pattern: 'plain', patternColor: '#8f9d91', patternOpacity: 1, photo: '',
             font: 'source', fontSize: baseFontSize, lineHeight: originalLineHeight, letterSpacing: -.01, paragraphSpacing: 1.2, padding: 46,
             user: 'USER', character: 'CHARACTER', divider: 'line', showUser: true, showCode: true, showImages: true, showDividers: true, showRoles: true,
             title: '',
@@ -978,7 +980,7 @@
             $('#remove-background').hidden = !config.photo;
             $('#font-family').value = config.font;
             $('#font-preview').style.fontFamily = FONTS[config.font]?.family || FONTS.serif.family;
-            const values = { 'font-size': config.fontSize, 'line-height': config.lineHeight ?? originalLineHeight, 'letter-spacing': config.letterSpacing ?? 0, 'paragraph-spacing': config.paragraphSpacing, 'page-padding': config.padding };
+            const values = { 'font-size': config.fontSize, 'line-height': config.lineHeight ?? originalLineHeight, 'letter-spacing': config.letterSpacing ?? 0, 'pattern-opacity': config.patternOpacity, 'paragraph-spacing': config.paragraphSpacing, 'page-padding': config.padding };
             for (const [id, value] of Object.entries(values)) { $(`#${id}`).value = value; $(`#${id}-value`).textContent = Number(Number(value).toFixed(2)); }
             for (const [id, key] of [['show-user', 'showUser'], ['show-code', 'showCode'], ['show-images', 'showImages'], ['show-dividers', 'showDividers'], ['show-roles', 'showRoles']]) $(`#${id}`).checked = config[key];
             $('#user-label').value = config.user; $('#character-label').value = config.character;
@@ -1002,11 +1004,11 @@
             if (value.narrationColor) page.style.setProperty('--narration-opacity', '1'); else page.style.removeProperty('--narration-opacity');
             page.style.setProperty('--log-line-height', String(value.lineHeight));
             page.style.setProperty('--log-letter-spacing', `${value.letterSpacing}em`);
-            page.style.setProperty('--decor-line-height', String(value.lineHeight));
+            if (value.lineHeight === originalLineHeight) page.style.removeProperty('--decor-line-height'); else page.style.setProperty('--decor-line-height', String(value.lineHeight));
             if (value.letterSpacing === -.01) page.style.removeProperty('--decor-letter-spacing'); else page.style.setProperty('--decor-letter-spacing', `${value.letterSpacing}em`);
             page.style.setProperty('--log-paragraph-spacing', `${value.paragraphSpacing}em`);
             page.style.setProperty('--page-padding', `${value.padding}px`);
-            const tile = patternTile(value.pattern, value.patternColor);
+            const tile = patternTile(value.pattern, value.patternColor, value.patternOpacity);
             page.style.backgroundImage = value.photo ? `url("${value.photo}")` : tile ? `url("${tile}")` : 'none';
             page.style.backgroundSize = value.photo ? 'cover' : 'auto';
             for (const [className, key] of [['hide-user', 'showUser'], ['hide-code', 'showCode'], ['hide-images', 'showImages'], ['hide-dividers', 'showDividers'], ['hide-roles', 'showRoles']]) page.classList.toggle(className, !config[key]);
@@ -1167,7 +1169,7 @@
             textSlices(selectedRange).reverse().forEach(({ node, start, end }) => {
                 const range = d.createRange(); range.setStart(node, start); range.setEnd(node, end);
                 const mark = node.parentElement.namespaceURI === 'http://www.w3.org/2000/svg' ? d.createElementNS('http://www.w3.org/2000/svg', 'tspan') : d.createElement('span'); mark.dataset.rkMark = kind;
-                mark.style.setProperty('--mark-color', markColor); mark.style.setProperty('--mark-wash', `${markColor}40`); range.surroundContents(mark);
+                mark.style.setProperty('--mark-color', markColor); mark.style.setProperty('--mark-wash', `${markColor}7a`); range.surroundContents(mark);
             });
             finishEdit();
         }
@@ -1230,9 +1232,14 @@
             item.setAttribute('aria-label', kind === 'text' ? '텍스트 상자' : options.label || '스티커');
             if (kind === 'text') { const span = d.createElement('span'); span.textContent = value; item.appendChild(span); styleText(item, options); }
             else { const image = d.createElement('img'); image.src = value; image.alt = ''; image.draggable = false; item.appendChild(image); }
-            item.style.width = `${kind === 'text' ? 190 : 88}px`; item.style.height = kind === 'text' ? 'auto' : '88px';
+            item.style.width = kind === 'text' ? 'max-content' : '88px'; item.style.height = kind === 'text' ? 'auto' : '88px';
             item.dataset.rotation = kind === 'text' ? '0' : '-6'; item.style.transform = `rotate(${item.dataset.rotation}deg)`;
             layers.appendChild(item);
+            if (kind === 'text') {
+                for (const side of ['left', 'right']) {
+                    const handle = d.createElement('span'); handle.className = 'text-resize'; handle.dataset.side = side; handle.setAttribute('aria-hidden', 'true'); item.appendChild(handle);
+                }
+            }
             item.style.left = `${Math.max(8, page.offsetWidth - item.offsetWidth - 24)}px`;
             item.style.top = `${clamp((w.innerHeight * .45 - page.getBoundingClientRect().top) / zoom, 10, Math.max(10, page.offsetHeight - item.offsetHeight - 10))}px`;
             closePanels(); selectItem(item); constrainItems(); commit();
@@ -1348,7 +1355,7 @@
         on($('#background-file'), 'change', async event => { try { const data = await readImageFile(event.target); if (data) choose('photo', data); } catch (error) { notify(error.message, true); } });
         on($('#remove-background'), 'click', () => choose('photo', ''));
         on($('#font-family'), 'change', event => selectFont(event.target.value));
-        for (const [id, key] of [['font-size', 'fontSize'], ['line-height', 'lineHeight'], ['letter-spacing', 'letterSpacing'], ['paragraph-spacing', 'paragraphSpacing'], ['page-padding', 'padding']]) {
+        for (const [id, key] of [['pattern-opacity', 'patternOpacity'], ['font-size', 'fontSize'], ['line-height', 'lineHeight'], ['letter-spacing', 'letterSpacing'], ['paragraph-spacing', 'paragraphSpacing'], ['page-padding', 'padding']]) {
             on($(`#${id}`), 'input', event => { config[key] = Number(event.target.value); render(); scheduleHistory(); }); on($(`#${id}`), 'change', commit);
         }
         on($('#reset-font'), 'click', () => {
@@ -1393,10 +1400,20 @@
         let drag = null;
         on(layers, 'pointerdown', event => {
             const item = event.target.closest('.item'); if (!item || !event.isPrimary || event.button !== 0) return;
-            event.preventDefault(); selectItem(item); drag = { item, id: event.pointerId, x: event.clientX, y: event.clientY, left: item.offsetLeft, top: item.offsetTop }; item.setPointerCapture(event.pointerId);
+            event.preventDefault(); selectItem(item); drag = { item, id: event.pointerId, x: event.clientX, y: event.clientY, left: item.offsetLeft, top: item.offsetTop, width: item.offsetWidth, side: event.target.closest('.text-resize')?.dataset.side, angle: (Number(item.dataset.rotation) || 0) * Math.PI / 180 }; item.setPointerCapture(event.pointerId);
         });
         on(layers, 'pointermove', event => {
             if (!drag || drag.id !== event.pointerId) return;
+            if (drag.side) {
+                const cosine = Math.cos(drag.angle), sine = Math.sin(drag.angle);
+                const delta = ((event.clientX - drag.x) * cosine + (event.clientY - drag.y) * sine) / zoom;
+                const width = clamp(drag.width + (drag.side === 'left' ? -delta : delta), 20, page.offsetWidth);
+                const change = width - drag.width, direction = drag.side === 'left' ? -1 : 1;
+                drag.item.style.width = `${width}px`;
+                drag.item.style.left = `${drag.left + change * (direction * cosine - 1) / 2}px`;
+                drag.item.style.top = `${drag.top + change * direction * sine / 2}px`;
+                constrainItems(); return;
+            }
             drag.item.style.left = `${drag.left + (event.clientX - drag.x) / zoom}px`; drag.item.style.top = `${drag.top + (event.clientY - drag.y) / zoom}px`; constrainItems();
         });
         for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) on(layers, type, () => { if (drag) { drag = null; commit(); } });
@@ -1449,7 +1466,7 @@
 
         function snapshotCapture(capture) {
             const copy = capture.cloneNode(true);
-            Object.assign(copy.style, { position: 'relative', left: '0', top: '0', transform: 'none', zIndex: '0', margin: '0' });
+            Object.assign(copy.style, { position: 'relative', left: '0', top: '0', transform: 'none', zIndex: '0', opacity: '1', margin: '0' });
             const html = d.createElement('div'); html.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
             const style = d.createElement('style');
             style.textContent = EDITOR_CSS + '\n' + $('#source-fonts').textContent + '\n' + $('#loaded-fonts').textContent;
@@ -1559,7 +1576,8 @@
                 if (sourceCSS) $('#source-fonts').textContent = sourceCSS;
                 await d.fonts.ready;
                 capture = page.cloneNode(true); capture.dataset.rkCapture = 'true'; capture.removeAttribute('id'); capture.querySelectorAll('[id]').forEach(node => { if (node.namespaceURI !== 'http://www.w3.org/2000/svg') node.removeAttribute('id'); });
-                Object.assign(capture.style, { position: 'fixed', left: '0', top: '0', transform: 'none', boxShadow: 'none', zIndex: '-1', pointerEvents: 'none' });
+                Object.assign(capture.style, { position: 'fixed', left: '0', top: '0', transform: 'none', boxShadow: 'none', zIndex: '-1', opacity: '0', pointerEvents: 'none' });
+                capture.querySelectorAll('.text-resize').forEach(node => node.remove());
                 capture.querySelectorAll('.selected').forEach(node => node.classList.remove('selected'));
                 if (!config.showUser) capture.querySelectorAll('.message[data-role="user"]').forEach(node => node.remove());
                 if (!config.showCode) capture.querySelectorAll('[data-rk-code],.message[data-rk-only=code]').forEach(node => node.remove());
@@ -1581,7 +1599,7 @@
         on($('#export'), 'click', exportImage);
         const resizeOutput = () => { outputBlob().catch(error => { if (frame.isConnected) notify(error.message, true); }); };
         const scheduleOutput = () => {
-            ++outputGeneration; clearTimeout(resizeTimer); resizeTimer = setTimeout(resizeOutput, 500);
+            ++outputGeneration; $('#output-size').textContent = '…'; clearTimeout(resizeTimer); resizeTimer = setTimeout(resizeOutput, 500);
         };
         on($('#output-format'), 'change', scheduleOutput);
         on($('#output-scale'), 'input', event => {
