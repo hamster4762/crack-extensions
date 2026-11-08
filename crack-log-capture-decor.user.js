@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.0.1
+// @version      1.1.0
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -30,12 +30,16 @@
     const BUBBLE = '.wrtn-markdown';
     const FONT_KEY = 'rokku_user_fonts_v1';
     const STICKER_KEY = 'rokku_user_stickers_v1';
+    const THEME_KEY = 'rokku_user_themes_v1';
+    const THEME_KEYS = ['showUser', 'showCode', 'showImages', 'showDividers', 'showRoles', 'user', 'character', 'divider', 'paper', 'pattern', 'patternColor', 'patternOpacity', 'photo', 'font', 'narrationColor', 'dialogueColor', 'fontSize', 'letterSpacing', 'lineHeight', 'paragraphSpacing', 'padding'];
+    const GM_RESOURCE_HOSTS = new Set(['crack-api.wrtn.ai', 'fonts.googleapis.com', 'fonts.gstatic.com', 'fe-web-assets.static.wrtn.ai', 'build-assets.static.wrtn.ai', 'wrtn-image-ai-character.static.wrtn.ai', 'cdn.jsdelivr.net', 'raw.githubusercontent.com']);
     const MAX_HISTORY = 20;
     const ICONS = {
         capture: '<rect x="3" y="5" width="18" height="15" rx="3"/><path d="m8 5 1-3h6l1 3"/><circle cx="12" cy="12.5" r="4"/>',
         close: '<path d="m6 6 12 12M18 6 6 18"/>',
         undo: '<path d="m8 4-5 5 5 5M3 9h11a6 6 0 0 1 0 12"/>',
         redo: '<path d="m16 4 5 5-5 5M21 9H10a6 6 0 0 0 0 12"/>',
+        theme: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
         source: '<path d="M4 3h16v14H9l-5 4zM8 7h8M8 11h6"/>',
         paper: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>',
         font: '<path d="m3 19 6-14 6 14M5 15h8M17 12h4M19 10v9"/>',
@@ -88,14 +92,23 @@
     }
     customFonts.forEach(installFont);
 
+    let customThemes = [];
+    try {
+        const value = GM_getValue(THEME_KEY, []);
+        if (Array.isArray(value)) customThemes = value.filter(item => item && typeof item.id === 'string' && typeof item.name === 'string' && item.settings && THEME_KEYS.every(key => Object.hasOwn(item.settings, key)));
+    } catch { /* A missing theme library does not prevent capture. */ }
+
     const resourceCache = new Map();
     async function requestResource(url, responseType = 'blob') {
         const parsed = new URL(url, location.href);
         if (!['http:', 'https:', 'data:', 'blob:'].includes(parsed.protocol)) throw new Error('지원하지 않는 리소스 주소입니다.');
         const key = `${responseType}:${parsed.href}`;
         if (!resourceCache.has(key)) {
-            const promise = /^(data:|blob:)/.test(parsed.href)
-                ? fetch(parsed.href).then(response => responseType === 'text' ? response.text() : response.blob())
+            const promise = /^(data:|blob:)/.test(parsed.href) || (parsed.hostname !== location.hostname && !GM_RESOURCE_HOSTS.has(parsed.hostname))
+                ? fetch(parsed.href, { credentials: 'omit' }).then(response => {
+                    if (!response.ok) throw new Error(`리소스 요청 실패 (${response.status}) · ${parsed.hostname}`);
+                    return responseType === 'text' ? response.text() : response.blob();
+                })
                 : new Promise((resolve, reject) => GM_xmlhttpRequest({
                     method: 'GET', url: parsed.href, responseType, timeout: 20000,
                     onload: response => response.status >= 200 && response.status < 300
@@ -765,6 +778,13 @@
         .upload{cursor:pointer}
         .upload svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6}
         .wide{width:100%;margin-top:14px}
+        .theme-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 10px}
+        .theme-card{display:flex;flex-direction:column;gap:7px;min-width:0;text-align:left;font-size:11px;color:var(--ink)}
+        .theme-card>span:last-child{width:100%;overflow-wrap:anywhere}
+        .theme-sample{display:flex;flex-direction:column;justify-content:center;gap:5px;width:100%;height:86px;padding:10px 12px;overflow:hidden;border:1px solid var(--line);border-radius:7px;background-repeat:repeat}
+        .theme-sample small{font-size:9px;letter-spacing:1px}
+        .theme-sample strong{font-weight:400;font-size:12px;white-space:nowrap}
+        .theme-card[aria-pressed=true] .theme-sample{outline:2px solid #7c926e;outline-offset:2px}
         .pattern-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 10px;margin-bottom:18px}
         .choice{display:flex;flex-direction:column;align-items:center;gap:7px;font-size:10px;color:#7e8b70;padding:0}
         .sample{display:block;width:100%;height:52px;border:1px solid var(--line);border-radius:5px;background-color:#fffaf1;background-repeat:repeat}
@@ -882,7 +902,8 @@
         return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>로그 편집</title><style>${EDITOR_CSS}</style><style id="source-fonts"></style><style id="loaded-fonts"></style></head><body>
             <button class="icon floating close-editor" id="close-editor" aria-label="편집기 닫기" title="편집기 닫기">${icon('close')}</button>
             <button class="icon floating save" id="export" aria-label="이미지 저장" title="이미지 저장">${icon('download')}</button>
-            <div class="dock"><nav class="toolbar" aria-label="편집 도구">${tool('undo', '실행 취소')}${tool('redo', '다시 실행')}<span class="separator"></span>${tool('source', '대화')}${tool('paper', '배경')}${tool('font', '글자')}<span class="separator"></span>${tool('title', '제목')}${tool('sticker', '스티커')}${tool('text', '텍스트 상자')}</nav>
+            <div class="dock"><nav class="toolbar" aria-label="편집 도구">${tool('undo', '실행 취소')}${tool('redo', '다시 실행')}<span class="separator"></span>${tool('theme', '테마')}${tool('source', '대화')}${tool('paper', '배경')}${tool('font', '글자')}<span class="separator"></span>${tool('title', '제목')}${tool('sticker', '스티커')}${tool('text', '텍스트 상자')}</nav>
+            <section class="popover" id="panel-theme" hidden>${head('테마')}<div class="field">기본 테마</div><div class="theme-grid" id="default-themes"></div><div class="settings-section"><div class="panel-head"><h2>사용자 테마</h2><button class="icon" id="add-theme" aria-label="현재 설정을 테마로 등록" title="현재 설정을 테마로 등록">${icon('plus')}</button></div><form id="theme-form" hidden><label class="field" for="theme-name">테마 이름</label><input class="input" id="theme-name" maxlength="60" required><div class="row" style="margin:10px 0"><button class="secondary" id="cancel-theme" type="button">취소</button><button class="primary" type="submit">등록</button></div></form><div class="status-text" id="empty-themes">등록한 테마가 없습니다.</div><div class="theme-grid" id="user-themes"></div></div></section>
             <section class="popover" id="panel-source" hidden>${head('대화')}${toggle('show-user', '유저 입력')}${toggle('show-code', '코드블럭')}${toggle('show-images', '이미지')}${toggle('show-dividers', '가름선')}${toggle('show-roles', '역할명')}<div class="settings-section"><label class="field" for="user-label">유저 문구</label><input class="input" id="user-label" maxlength="60"><label class="field" for="character-label">캐릭터 문구</label><input class="input" id="character-label" maxlength="60"><div class="field" id="divider-label">가름선 디자인</div><div class="divider-options" id="divider-options" role="group" aria-labelledby="divider-label">${[['line', '실선'], ['double', '이중선'], ['dashed', '점선'], ['diamond', '다이아몬드']].map(([id, label]) => `<button type="button" class="divider-choice" data-divider-choice="${id}" data-divider="${id}" aria-pressed="false"><span class="divider-preview" aria-hidden="true"><span class="divider-sample"></span></span><span>${label}</span></button>`).join('')}</div></div></section>
             <section class="popover" id="panel-paper" hidden>${head('배경')}<div class="pattern-grid" id="patterns"></div><div class="field">종이 색</div>${swatches('paper', ['#17191c', '#fff8e6', '#ffffff', '#edf2e9', '#f7e9e5'], '종이 색')}<fieldset id="pattern-colors"><legend class="field">무늬 색</legend>${swatches('pattern', ['#91ac98', '#9eb9d4', '#cd9f8b', '#b3a0c2', '#b6a084'], '무늬 색')}${range('pattern-opacity', '무늬 농도', 0, 1, .05)}</fieldset><label class="upload">${icon('image')}배경 사진<input id="background-file" type="file" accept="image/*" hidden></label><button class="secondary wide" id="remove-background" hidden>사진 제거</button></section>
             <section class="popover" id="panel-font" hidden>${head('글자·간격·여백', `<button class="icon" id="reset-font" aria-label="글자·간격·여백 초기화" title="글자·간격·여백 초기화">${icon('reset')}</button>`)}<label class="field" for="font-family">본문 글꼴</label><div class="row"><select id="font-family" class="input"></select><button class="icon" id="add-font" aria-label="웹폰트 추가" title="웹폰트 추가">${icon('plus')}</button></div><div class="font-preview" id="font-preview">가나다라마바사 ABC 123</div><div class="status-text" id="font-status" role="status"></div>${textColor('narration', '지문 색')}${textColor('dialogue', '대사 색')}${range('font-size', '글자 크기', 12, 30, 1)}${range('letter-spacing', '자간', -.05, .15, .01)}${range('line-height', '줄 간격', 1.2, 2.8, .05)}${range('paragraph-spacing', '문단 간격', 0, 2.4, .05)}${range('page-padding', '종이 여백', 0, 80, 1)}</section>
@@ -929,6 +950,16 @@
             user: 'USER', character: 'CHARACTER', divider: 'line', showUser: true, showCode: true, showImages: true, showDividers: true, showRoles: true,
             title: '',
         };
+        const themeDefaults = themeSettings(config);
+        const defaultThemes = [
+            { name: '미지정 · 원문 유지', settings: { ...themeDefaults } },
+            { name: '크림 노트', settings: { ...themeDefaults, paper: '#fff8e6', pattern: 'ruled', patternColor: '#b6a084', patternOpacity: .5, font: 'serif', narrationColor: '#7b7063', dialogueColor: '#3f362d', showRoles: false, padding: 50 } },
+            { name: '숲속 기록', settings: { ...themeDefaults, paper: '#edf2e9', pattern: 'dots', patternColor: '#91ac98', patternOpacity: .65, font: 'batang', narrationColor: '#647963', dialogueColor: '#304631', divider: 'diamond', lineHeight: 1.7 } },
+            { name: '장미 편지', settings: { ...themeDefaults, paper: '#f7e9e5', pattern: 'plain', patternColor: '#cd9f8b', font: 'batang', narrationColor: '#98736f', dialogueColor: '#593b40', divider: 'double', showRoles: false, padding: 54 } },
+            { name: '푸른 격자', settings: { ...themeDefaults, paper: '#f2f6fb', pattern: 'grid', patternColor: '#9eb9d4', patternOpacity: .55, font: 'sans', narrationColor: '#71849b', dialogueColor: '#32485e', divider: 'dashed', letterSpacing: 0 } },
+            { name: '밤의 서재', settings: { ...themeDefaults, paper: '#17191c', pattern: 'grain', patternColor: '#91ac98', patternOpacity: .4, font: 'serif', narrationColor: '#a3a3a8', dialogueColor: '#f4f2ed', divider: 'line', lineHeight: 1.7, padding: 50 } },
+        ];
+        const themeCards = new Map();
         const history = []; let historyIndex = -1;
         function on(element, name, action, options = {}) { element.addEventListener(name, action, { ...options, signal: controller.signal }); }
         function raiseNotice() {
@@ -971,6 +1002,7 @@
             container.querySelectorAll(selector).forEach(button => button.setAttribute('aria-pressed', String(button.dataset[key] === value)));
         }
         function refreshControls() {
+            for (const [button, settings] of themeCards) button.setAttribute('aria-pressed', String(THEME_KEYS.every(key => config[key] === settings[key])));
             selectButtons($('#patterns'), '[data-pattern]', config.pattern, 'pattern');
             for (const [name, color] of [['paper', config.paper], ['pattern', config.patternColor], ['narration', config.narrationColor], ['dialogue', config.dialogueColor]]) {
                 $(`#${name}-color`).value = color || (name === 'paper' ? sourcePaper : name === 'narration' ? NARRATION_COLOR : DIALOGUE_COLOR);
@@ -1127,6 +1159,56 @@
             }
         }
         function choose(key, value) { config[key] = value; render(); commit(); }
+        function themeSettings(value) {
+            return Object.fromEntries(THEME_KEYS.map(key => [key, value[key]]));
+        }
+        async function applyTheme(theme) {
+            const settings = themeSettings(theme.settings);
+            const missingFont = !FONTS[settings.font];
+            if (missingFont) settings.font = 'source';
+            const generation = ++fontGeneration;
+            try {
+                await ensureFont(settings.font);
+                if (!frame.isConnected || generation !== fontGeneration) return;
+                if (historyTimer) commit();
+                Object.assign(config, settings); render(); commit();
+                if (missingFont) notify('테마의 글꼴이 삭제되어 원문 유지로 적용했습니다.');
+            } catch (error) { if (frame.isConnected) notify(`테마를 적용하지 못했습니다. ${error.message}`, true); }
+        }
+        function themeChoices() {
+            themeCards.clear(); $('#default-themes').replaceChildren(); $('#user-themes').replaceChildren();
+            $('#empty-themes').hidden = customThemes.length > 0;
+            for (const [container, themes] of [[$('#default-themes'), defaultThemes], [$('#user-themes'), customThemes]]) {
+                for (const theme of themes) {
+                    const value = theme.settings;
+                    const button = d.createElement('button'); button.type = 'button'; button.className = 'theme-card';
+                    const sample = d.createElement('span'); sample.className = 'theme-sample'; sample.setAttribute('aria-hidden', 'true');
+                    sample.style.backgroundColor = value.paper || sourcePaper;
+                    const tile = patternTile(value.pattern, value.patternColor, value.patternOpacity);
+                    sample.style.backgroundImage = value.photo ? `url("${value.photo}")` : tile ? `url("${tile}")` : 'none';
+                    if (value.photo) sample.style.backgroundSize = 'cover';
+                    sample.style.fontFamily = FONTS[value.font]?.family || FONTS.source.family;
+                    const role = d.createElement('small'); role.textContent = value.character; role.hidden = !value.showRoles; role.style.color = value.narrationColor || sourceInk;
+                    const text = d.createElement('strong'); text.textContent = '오늘의 이야기를 담아'; text.style.color = value.dialogueColor || sourceInk;
+                    const narration = d.createElement('strong'); narration.textContent = '오래 간직할 한 장'; narration.style.color = value.narrationColor || sourceInk;
+                    const name = d.createElement('span'); name.textContent = theme.name;
+                    sample.append(role, text, narration); button.append(sample, name);
+                    button.setAttribute('aria-pressed', String(THEME_KEYS.every(key => config[key] === value[key])));
+                    on(button, 'click', () => applyTheme(theme)); themeCards.set(button, value); container.appendChild(button);
+                }
+            }
+        }
+        on($('#add-theme'), 'click', () => { $('#theme-form').hidden = false; $('#theme-name').focus(); });
+        on($('#cancel-theme'), 'click', () => { $('#theme-form').hidden = true; $('#theme-form').reset(); });
+        on($('#theme-form'), 'submit', event => {
+            event.preventDefault(); const name = $('#theme-name').value.trim(); if (!name) return;
+            const theme = { id: `t_${Date.now().toString(36)}`, name, settings: themeSettings(config) };
+            try {
+                const next = [...customThemes, theme]; GM_setValue(THEME_KEY, next); customThemes = next;
+                $('#theme-form').reset(); $('#theme-form').hidden = true; themeChoices();
+                notify('현재 설정을 테마로 등록했습니다.', false, 2000);
+            } catch (error) { notify(`테마를 등록하지 못했습니다. ${error.message}`, true); }
+        });
         function makeChoices() {
             for (const [id, label] of Object.entries(PATTERNS)) {
                 const button = d.createElement('button'); button.className = 'choice'; button.dataset.pattern = id; button.setAttribute('aria-pressed', String(id === 'plain'));
@@ -1675,7 +1757,7 @@
             const decodes = [...messages.querySelectorAll('img')].map(image => image.decode().catch(() => {}));
             await Promise.all(decodes);
             if (!frame.isConnected) return;
-            fontOptions(); makeChoices(); showStickers('도형'); render();
+            fontOptions(); makeChoices(); themeChoices(); showStickers('도형'); render();
             await loadUsedFonts(page, d);
             if (!frame.isConnected) return;
             updateZoom(); commit();
