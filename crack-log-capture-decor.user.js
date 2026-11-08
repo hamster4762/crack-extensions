@@ -2,9 +2,11 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.0.0
+// @version      1.0.1
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
-// @match        https://crack.wrtn.ai/stories/*
+// @match        https://crack.wrtn.ai/*
+// @run-at       document-idle
+// @grant        window.onurlchange
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
@@ -177,7 +179,7 @@
         target.style.fontSize = `calc(var(--log-size, 16px) * ${decorated ? (parseFloat(styles.fontSize) || 16) / 16 : headingScale})`;
         target.style.fontWeight = styles.fontWeight;
         target.style.fontStyle = styles.fontStyle;
-        target.style.lineHeight = decorated ? `var(--decor-line-height, ${styles.lineHeight})` : 'var(--log-line-height, 1.85)';
+        target.style.lineHeight = decorated ? `var(--decor-line-height, ${styles.lineHeight})` : 'var(--log-line-height, 1.5)';
         target.style.letterSpacing = decorated ? `var(--decor-letter-spacing, ${styles.letterSpacing})` : 'var(--log-letter-spacing, -.01em)';
         target.style.transition = 'none'; target.style.animation = 'none';
         const vector = source.namespaceURI === 'http://www.w3.org/2000/svg';
@@ -200,13 +202,14 @@
                 target.style.display = 'block';
                 target.style.marginLeft = target.style.marginRight = '0';
                 target.style.marginTop = '0';
-                target.style.marginBottom = /^(P|H[1-6])$/.test(source.tagName) ? '.8em' : '0';
+                target.style.marginBottom = /^(P|H[1-6])$/.test(source.tagName) ? 'var(--log-paragraph-spacing, 1.2em)' : '0';
                 const painted = styles.backgroundImage !== 'none' || (styles.backgroundColor !== 'transparent' && !/rgba\([^)]*,\s*0\s*\)/.test(styles.backgroundColor)) || styles.boxShadow !== 'none' || ['Top', 'Right', 'Bottom', 'Left'].some(side => parseFloat(styles[`border${side}Width`]) > 0);
                 if (!painted) target.style.padding = '0';
             }
             if (/^(UL|OL)$/.test(source.tagName)) { target.style.margin = '0 0 .8em'; target.style.padding = '0 0 0 1.5em'; }
             if (/^(PRE|TABLE)$/.test(source.tagName)) target.style.overflowX = 'auto';
         }
+        if (decorated && source.tagName === 'P' && !graphic) target.style.marginBottom = 'var(--log-paragraph-spacing, 1.2em)';
         if (styles.position === 'fixed') target.style.position = 'absolute';
     }
     function pseudoContent(value) {
@@ -290,7 +293,12 @@
         if (tag === 'img' || tag === 'canvas' || tag === 'video') {
             clone.dataset.rkImage = 'true'; clone.style.maxWidth = '100%'; clone.style.height = 'auto'; clone.loading = 'eager';
         }
-        if (tag === 'pre' || node.matches('.wrtn-codeblock') || (node.matches('.not-wrtn-markdown') && node.querySelector('pre,code'))) clone.dataset.rkCode = 'true';
+        if (tag === 'pre' || node.matches('.wrtn-codeblock') || (node.matches('.not-wrtn-markdown') && node.querySelector('pre,code'))) {
+            clone.dataset.rkCode = 'true';
+            if (!node.parentElement?.closest('.wrtn-codeblock,.not-wrtn-markdown,pre')) {
+                clone.style.marginTop = clone.style.marginBottom = 'var(--log-paragraph-spacing, 1.2em)';
+            }
+        }
         if (tag === 'hr') clone.dataset.rkSourceDivider = 'true';
         const appendPseudo = name => {
             const computed = view.getComputedStyle(node, name);
@@ -312,7 +320,7 @@
         return clone;
     }
     async function messageRoles(entries) {
-        const ids = new Map(entries.map(({ bubble }) => [bubble, bubble.closest('[data-message-group-id]')?.getAttribute('data-message-group-id')]));
+        const ids = new Map(entries.map(({ bubble }) => [bubble, bubble.closest('[data-message-group-id]')?.getAttribute('data-message-group-id')?.replace(/^search:/, '')]));
         if ([...ids.values()].some(id => !id)) throw new Error('대화의 메시지 ID를 찾지 못했습니다. 페이지를 새로고침해주세요.');
         const chatId = location.pathname.match(/\/(?:episodes|chats)\/([a-f0-9]{24})(?:\/|$)/i)?.[1];
         if (!chatId) throw new Error('현재 채팅방 ID를 찾지 못했습니다.');
@@ -399,11 +407,15 @@
         return units;
     }
     function paragraphRects(unit) {
-        return unit.nodes.flatMap(node => {
+        const rects = unit.nodes.flatMap(node => {
             if (node.nodeType !== Node.TEXT_NODE) return [...node.getClientRects()];
             const range = node.ownerDocument.createRange(); range.selectNodeContents(node);
             return [...range.getClientRects()];
         }).filter(rect => rect.width > 0 && rect.height > 0);
+        if (!rects.length) return [];
+        const left = Math.min(...rects.map(rect => rect.left)), top = Math.min(...rects.map(rect => rect.top));
+        const right = Math.max(...rects.map(rect => rect.right)), bottom = Math.max(...rects.map(rect => rect.bottom));
+        return [{ left, top, right, bottom, width: right - left, height: bottom - top }];
     }
 
     let picking = null;
@@ -473,7 +485,12 @@
             if (mode === 'block') return { node: bubble, unit: { node: bubble, nodes: [bubble] }, bubble };
             const units = paragraphUnits(bubble);
             const unit = units.find(unit => unit.nodes.length === 1 && unit.node.nodeType === Node.ELEMENT_NODE && path.some(target => target.nodeType === Node.ELEMENT_NODE && (unit.node === target || unit.node.contains(target)))) ||
-                units.find(unit => paragraphRects(unit).some(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom));
+                units.reduce((closest, unit) => {
+                    const rect = paragraphRects(unit)[0];
+                    if (!rect) return closest;
+                    const distance = Math.hypot(Math.max(rect.left - event.clientX, event.clientX - rect.right, 0), Math.max(rect.top - event.clientY, event.clientY - rect.bottom, 0));
+                    return !closest || distance < closest.distance ? { unit, distance } : closest;
+                }, null)?.unit;
             return unit ? { node: unit.node, unit, bubble } : null;
         };
         document.addEventListener('pointermove', event => { if (!picking) return; picking.hover = targetFromEvent(event); positionOutline(); }, { signal: controller.signal });
@@ -504,6 +521,11 @@
     launch.addEventListener('pointerdown', event => event.preventDefault());
     launch.addEventListener('click', showPickerPopup);
     document.body.appendChild(launch);
+    function syncLaunch() {
+        launch.style.display = !editor && /^\/stories\/[^/]+\/(?:episodes|chats)\/[a-f0-9]{24}(?:\/|$)/i.test(location.pathname) ? 'grid' : 'none';
+    }
+    window.addEventListener('urlchange', () => { stopPicking(); closePickerPopup(); syncLaunch(); });
+    syncLaunch();
 
     function fontBlocks(css, base) {
         return [...css.matchAll(/@font-face\s*\{([^}]+)\}/gi)].map(match => ({ body: match[1], base }));
@@ -698,7 +720,7 @@
         .stage{position:fixed;inset:62px 0 0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 12px 60px;overflow-anchor:none}
         .sizer{position:relative;margin:0 auto;overflow:hidden}
         .page{position:absolute;left:0;top:0;transform-origin:top left;background-color:var(--paper-color,#fff);background-repeat:repeat;box-shadow:0 3px 8px #19231314,0 18px 45px #1923130d;color:var(--body-color,#333);--body-font:"Noto Serif KR","AppleMyungjo","Batang",serif}
-        .page-body{position:relative;padding:var(--page-padding,24px);font:16px/1.85 var(--body-font);min-height:150px;overflow-wrap:anywhere}
+        .page-body{position:relative;padding:var(--page-padding,24px);font:16px/1.5 var(--body-font);min-height:150px;overflow-wrap:anywhere}
         .log,.log *{user-select:text!important;-webkit-user-select:text!important}
         .page-body,.page-body *{-webkit-touch-callout:none!important}
         .message{position:relative;margin:0 0 24px;min-width:0}
@@ -817,6 +839,9 @@
         .check{display:flex;gap:7px;align-items:center;font-size:11px;color:#839274;margin-top:12px}
         .check input{accent-color:var(--accent)}
         .result{width:490px}
+        #download,#copy-image{position:relative;padding-left:38px;padding-right:38px}
+        #download[aria-busy=true]:after,#copy-image[aria-busy=true]:after{content:"";position:absolute;right:13px;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:output-spin .7s linear infinite}
+        @keyframes output-spin{to{transform:rotate(360deg)}}
         .result-preview{height:310px;background:#e8ede2;border-radius:8px;padding:12px;display:flex;align-items:center;justify-content:center}
         .result-preview img{display:block;max-width:100%;max-height:100%;object-fit:contain}
         .number{width:60px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink)}
@@ -858,7 +883,7 @@
             <div class="dock"><nav class="toolbar" aria-label="편집 도구">${tool('undo', '실행 취소')}${tool('redo', '다시 실행')}<span class="separator"></span>${tool('source', '대화')}${tool('paper', '배경')}${tool('font', '글자')}<span class="separator"></span>${tool('title', '제목')}${tool('sticker', '스티커')}${tool('text', '텍스트 상자')}</nav>
             <section class="popover" id="panel-source" hidden>${head('대화')}${toggle('show-user', '유저 입력')}${toggle('show-code', '코드블럭')}${toggle('show-images', '이미지')}${toggle('show-dividers', '가름선')}${toggle('show-roles', '역할명')}<div class="settings-section"><label class="field" for="user-label">유저 문구</label><input class="input" id="user-label" maxlength="60"><label class="field" for="character-label">캐릭터 문구</label><input class="input" id="character-label" maxlength="60"><div class="field" id="divider-label">가름선 디자인</div><div class="divider-options" id="divider-options" role="group" aria-labelledby="divider-label">${[['line', '실선'], ['double', '이중선'], ['dashed', '점선'], ['diamond', '다이아몬드']].map(([id, label]) => `<button type="button" class="divider-choice" data-divider-choice="${id}" data-divider="${id}" aria-pressed="false"><span class="divider-preview" aria-hidden="true"><span class="divider-sample"></span></span><span>${label}</span></button>`).join('')}</div></div></section>
             <section class="popover" id="panel-paper" hidden>${head('배경')}<div class="pattern-grid" id="patterns"></div><div class="field">종이 색</div>${swatches('paper', ['#17191c', '#fff8e6', '#ffffff', '#edf2e9', '#f7e9e5'], '종이 색')}<fieldset id="pattern-colors"><legend class="field">무늬 색</legend>${swatches('pattern', ['#91ac98', '#9eb9d4', '#cd9f8b', '#b3a0c2', '#b6a084'], '무늬 색')}</fieldset><label class="upload">${icon('image')}배경 사진<input id="background-file" type="file" accept="image/*" hidden></label><button class="secondary wide" id="remove-background" hidden>사진 제거</button></section>
-            <section class="popover" id="panel-font" hidden>${head('글자·간격·여백', `<button class="icon" id="reset-font" aria-label="글자·간격·여백 초기화" title="글자·간격·여백 초기화">${icon('reset')}</button>`)}<label class="field" for="font-family">본문 글꼴</label><div class="row"><select id="font-family" class="input"></select><button class="icon" id="add-font" aria-label="웹폰트 추가" title="웹폰트 추가">${icon('plus')}</button></div><div class="font-preview" id="font-preview">가나다라마바사 ABC 123</div><div class="status-text" id="font-status" role="status"></div>${textColor('narration', '지문 색')}${textColor('dialogue', '대사 색')}${range('font-size', '글자 크기', 12, 30, 1)}${range('line-height', '줄 간격', 1.2, 2.8, .05)}${range('letter-spacing', '자간', -.05, .15, .01)}${range('page-padding', '종이 여백', 0, 80, 1)}</section>
+            <section class="popover" id="panel-font" hidden>${head('글자·간격·여백', `<button class="icon" id="reset-font" aria-label="글자·간격·여백 초기화" title="글자·간격·여백 초기화">${icon('reset')}</button>`)}<label class="field" for="font-family">본문 글꼴</label><div class="row"><select id="font-family" class="input"></select><button class="icon" id="add-font" aria-label="웹폰트 추가" title="웹폰트 추가">${icon('plus')}</button></div><div class="font-preview" id="font-preview">가나다라마바사 ABC 123</div><div class="status-text" id="font-status" role="status"></div>${textColor('narration', '지문 색')}${textColor('dialogue', '대사 색')}${range('font-size', '글자 크기', 12, 30, 1)}${range('letter-spacing', '자간', -.05, .15, .01)}${range('line-height', '줄 간격', 1.2, 2.8, .05)}${range('paragraph-spacing', '문단 간격', 0, 2.4, .05)}${range('page-padding', '종이 여백', 0, 80, 1)}</section>
             <section class="popover" id="panel-title" hidden>${head('제목')}<form id="title-form"><label class="field" for="title-value">제목</label><textarea id="title-value" class="input" rows="4" placeholder="제목 입력"></textarea><div class="row" style="margin-top:14px"><button class="secondary" id="remove-title" type="button">${icon('trash')}삭제</button><button class="primary" type="submit" style="flex:1">적용</button></div></form></section>
             <section class="popover" id="panel-sticker" hidden>${head('스티커')}<div class="tabs" id="sticker-tabs"></div><div class="stickers" id="stickers"></div><label class="upload wide">${icon('plus')}스티커 등록<input id="sticker-file" type="file" accept="image/*" hidden></label></section>
             <section class="popover" id="panel-text" hidden>${head('텍스트 상자')}<form id="text-form"><label class="field" for="text-value">내용</label><textarea class="input" id="text-value" rows="3" placeholder="텍스트 입력" required></textarea>${textColor('text', '글자색')}${range('text-size', '글자 크기', 12, 60, 1)}<button class="primary wide" id="text-apply" type="submit">추가</button><button class="secondary wide" id="new-text" type="button" hidden>새 텍스트 추가</button></form></section></div>
@@ -878,7 +903,7 @@
         const frame = document.createElement('iframe'); frame.title = '로그 편집기';
         frame.style.cssText = 'position:fixed;left:50%;top:48px;transform:translateX(-50%);width:min(880px,calc(100% - clamp(16px,4vw,48px)));height:calc(100% - 48px - clamp(8px,2vw,24px));box-sizing:border-box;border:1px solid #cad3c3;border-radius:14px;box-shadow:0 8px 45px #0004;z-index:2147483647;background:#eef0eb;';
         const previousOverflow = document.documentElement.style.overflow;
-        document.documentElement.style.overflow = 'hidden'; document.body.appendChild(frame); editor = frame; launch.hidden = true;
+        document.documentElement.style.overflow = 'hidden'; document.body.appendChild(frame); editor = frame; syncLaunch();
         const d = frame.contentDocument, w = frame.contentWindow;
         d.open(); d.write(editorHTML()); d.close();
         const $ = selector => d.querySelector(selector), $$ = selector => [...d.querySelectorAll(selector)];
@@ -895,10 +920,10 @@
             if (color !== 'transparent' && !/rgba\([^)]*,\s*0\s*\)/.test(color)) { sourcePaper = compatibleColors(color, context); break; }
         }
         const sourceInk = compatibleColors(getComputedStyle(entries[0].bubble).color, context);
-        const baseFontSize = 16, originalLineHeight = 1.85, width = 760;
+        const baseFontSize = 16, originalLineHeight = 1.5, width = 760;
         const config = {
             paper: null, narrationColor: null, dialogueColor: null, pattern: 'plain', patternColor: '#8f9d91', photo: '',
-            font: 'source', fontSize: baseFontSize, lineHeight: originalLineHeight, letterSpacing: -.01, padding: 46,
+            font: 'source', fontSize: baseFontSize, lineHeight: originalLineHeight, letterSpacing: -.01, paragraphSpacing: 1.2, padding: 46,
             user: 'USER', character: 'CHARACTER', divider: 'line', showUser: true, showCode: true, showImages: true, showDividers: true, showRoles: true,
             title: '',
         };
@@ -922,7 +947,7 @@
             resizeObserver.disconnect(); w.cancelAnimationFrame(zoomFrame); if (resultURL) URL.revokeObjectURL(resultURL);
             resultMarkup = ''; resultBlob = null;
             context.cancelled = true;
-            frame.remove(); editor = null; launch.hidden = false; launch.disabled = false; resourceCache.clear(); document.documentElement.style.overflow = previousOverflow;
+            frame.remove(); editor = null; syncLaunch(); launch.disabled = false; resourceCache.clear(); document.documentElement.style.overflow = previousOverflow;
         }
         function updateZoom() {
             if (!frame.isConnected || zoomFrame) return;
@@ -953,7 +978,7 @@
             $('#remove-background').hidden = !config.photo;
             $('#font-family').value = config.font;
             $('#font-preview').style.fontFamily = FONTS[config.font]?.family || FONTS.serif.family;
-            const values = { 'font-size': config.fontSize, 'line-height': config.lineHeight ?? originalLineHeight, 'letter-spacing': config.letterSpacing ?? 0, 'page-padding': config.padding };
+            const values = { 'font-size': config.fontSize, 'line-height': config.lineHeight ?? originalLineHeight, 'letter-spacing': config.letterSpacing ?? 0, 'paragraph-spacing': config.paragraphSpacing, 'page-padding': config.padding };
             for (const [id, value] of Object.entries(values)) { $(`#${id}`).value = value; $(`#${id}-value`).textContent = Number(Number(value).toFixed(2)); }
             for (const [id, key] of [['show-user', 'showUser'], ['show-code', 'showCode'], ['show-images', 'showImages'], ['show-dividers', 'showDividers'], ['show-roles', 'showRoles']]) $(`#${id}`).checked = config[key];
             $('#user-label').value = config.user; $('#character-label').value = config.character;
@@ -977,8 +1002,9 @@
             if (value.narrationColor) page.style.setProperty('--narration-opacity', '1'); else page.style.removeProperty('--narration-opacity');
             page.style.setProperty('--log-line-height', String(value.lineHeight));
             page.style.setProperty('--log-letter-spacing', `${value.letterSpacing}em`);
-            if (value.lineHeight === originalLineHeight) page.style.removeProperty('--decor-line-height'); else page.style.setProperty('--decor-line-height', String(value.lineHeight));
+            page.style.setProperty('--decor-line-height', String(value.lineHeight));
             if (value.letterSpacing === -.01) page.style.removeProperty('--decor-letter-spacing'); else page.style.setProperty('--decor-letter-spacing', `${value.letterSpacing}em`);
+            page.style.setProperty('--log-paragraph-spacing', `${value.paragraphSpacing}em`);
             page.style.setProperty('--page-padding', `${value.padding}px`);
             const tile = patternTile(value.pattern, value.patternColor);
             page.style.backgroundImage = value.photo ? `url("${value.photo}")` : tile ? `url("${tile}")` : 'none';
@@ -1141,7 +1167,7 @@
             textSlices(selectedRange).reverse().forEach(({ node, start, end }) => {
                 const range = d.createRange(); range.setStart(node, start); range.setEnd(node, end);
                 const mark = node.parentElement.namespaceURI === 'http://www.w3.org/2000/svg' ? d.createElementNS('http://www.w3.org/2000/svg', 'tspan') : d.createElement('span'); mark.dataset.rkMark = kind;
-                mark.style.setProperty('--mark-color', markColor); mark.style.setProperty('--mark-wash', `${markColor}7a`); range.surroundContents(mark);
+                mark.style.setProperty('--mark-color', markColor); mark.style.setProperty('--mark-wash', `${markColor}40`); range.surroundContents(mark);
             });
             finishEdit();
         }
@@ -1322,12 +1348,12 @@
         on($('#background-file'), 'change', async event => { try { const data = await readImageFile(event.target); if (data) choose('photo', data); } catch (error) { notify(error.message, true); } });
         on($('#remove-background'), 'click', () => choose('photo', ''));
         on($('#font-family'), 'change', event => selectFont(event.target.value));
-        for (const [id, key] of [['font-size', 'fontSize'], ['line-height', 'lineHeight'], ['letter-spacing', 'letterSpacing'], ['page-padding', 'padding']]) {
+        for (const [id, key] of [['font-size', 'fontSize'], ['line-height', 'lineHeight'], ['letter-spacing', 'letterSpacing'], ['paragraph-spacing', 'paragraphSpacing'], ['page-padding', 'padding']]) {
             on($(`#${id}`), 'input', event => { config[key] = Number(event.target.value); render(); scheduleHistory(); }); on($(`#${id}`), 'change', commit);
         }
         on($('#reset-font'), 'click', () => {
             ++fontGeneration; $('#font-status').textContent = '';
-            Object.assign(config, { font: 'source', fontSize: baseFontSize, lineHeight: originalLineHeight, letterSpacing: -.01, padding: 46, narrationColor: null, dialogueColor: null });
+            Object.assign(config, { font: 'source', fontSize: baseFontSize, lineHeight: originalLineHeight, letterSpacing: -.01, paragraphSpacing: 1.2, padding: 46, narrationColor: null, dialogueColor: null });
             render(); commit();
         });
         on($('#add-font'), 'click', () => { fontOptions(); showDialog($('#font-dialog')); });
@@ -1489,25 +1515,36 @@
             try { return await encode(canvas, format); }
             finally { canvas.width = canvas.height = 1; }
         }
-        async function outputBlob() {
-            if (!resultMarkup) return;
+        let outputTask = null, resultGeneration = -1;
+        async function outputBlob(immediate = false) {
             clearTimeout(resizeTimer);
-            const generation = ++outputGeneration, format = $('#output-format').value;
-            const factor = clamp($('#output-scale').value, 50, 200) / 100;
-            $('#output-scale-value').textContent = `${Math.round(factor * 100)}%`;
-            $('#download').disabled = $('#copy-image').disabled = true;
-            let ready = false;
-            try {
-                const blob = await encodedOutput(format, generation);
-                if (!frame.isConnected || generation !== outputGeneration) return;
-                if (format === 'webp' && blob.type !== 'image/webp') { $('#output-format').value = 'png'; notify('이 브라우저가 WebP를 지원하지 않아 PNG로 준비했습니다.'); }
-                resultBlob = blob;
-                if (resultURL) URL.revokeObjectURL(resultURL); resultURL = URL.createObjectURL(blob);
-                const preview = d.createElement('img'); preview.src = resultURL; preview.alt = '저장할 이미지'; $('#result-preview').replaceChildren(preview);
-                $('#output-size').textContent = `${Math.round(width * factor)} × ${Math.round(resultHeight * factor)} · ${(blob.size / 1048576).toFixed(1)} MB`;
-                ready = true;
-            } catch (error) { if (frame.isConnected && generation === outputGeneration) throw error; }
-            finally { if (frame.isConnected && generation === outputGeneration) $('#download').disabled = $('#copy-image').disabled = !ready; }
+            while (resultMarkup && frame.isConnected) {
+                const generation = outputGeneration;
+                if (resultGeneration === generation) return resultBlob;
+                if (outputTask) {
+                    await outputTask;
+                    if (!immediate && generation !== outputGeneration) return null;
+                    continue;
+                }
+                const format = $('#output-format').value;
+                const factor = clamp($('#output-scale').value, 50, 200) / 100;
+                $('#output-scale-value').textContent = `${Math.round(factor * 100)}%`;
+                outputTask = (async () => {
+                    try {
+                        const blob = await encodedOutput(format, generation);
+                        if (!frame.isConnected || generation !== outputGeneration) return;
+                        if (format === 'webp' && blob.type !== 'image/webp') { $('#output-format').value = 'png'; notify('이 브라우저가 WebP를 지원하지 않아 PNG로 준비했습니다.'); }
+                        resultBlob = blob; resultGeneration = generation;
+                        if (resultURL) URL.revokeObjectURL(resultURL); resultURL = URL.createObjectURL(blob);
+                        const preview = d.createElement('img'); preview.src = resultURL; preview.alt = '저장할 이미지'; $('#result-preview').replaceChildren(preview);
+                        $('#output-size').textContent = `${Math.round(width * factor)} × ${Math.round(resultHeight * factor)} · ${(blob.size / 1048576).toFixed(1)} MB`;
+                    } catch (error) { if (frame.isConnected && generation === outputGeneration) throw error; }
+                })();
+                try { await outputTask; }
+                finally { outputTask = null; }
+                if (!immediate && generation !== outputGeneration) return null;
+            }
+            return null;
         }
         async function exportImage() {
             if (busy) return;
@@ -1537,36 +1574,46 @@
                 await nextFrame(); await nextFrame();
                 resultHeight = Math.ceil(capture.scrollHeight); resultMarkup = snapshotCapture(capture);
                 capture.remove(); capture = null;
-                $('#output-scale').value = 100; await outputBlob(); showDialog($('#result-dialog'));
+                $('#output-scale').value = 100; ++outputGeneration; await outputBlob(); showDialog($('#result-dialog'));
             } catch (error) { resultMarkup = ''; if (frame.isConnected) notify(`이미지를 만들지 못했습니다. ${error.message}`, true); }
             finally { capture?.remove(); if (frame.isConnected) setBusy(false); }
         }
         on($('#export'), 'click', exportImage);
-        on($('#output-format'), 'change', async () => { try { await outputBlob(); } catch (error) { notify(error.message, true); } });
         const resizeOutput = () => { outputBlob().catch(error => { if (frame.isConnected) notify(error.message, true); }); };
+        const scheduleOutput = () => {
+            ++outputGeneration; clearTimeout(resizeTimer); resizeTimer = setTimeout(resizeOutput, 500);
+        };
+        on($('#output-format'), 'change', scheduleOutput);
         on($('#output-scale'), 'input', event => {
-            $('#output-scale-value').textContent = `${event.target.value}%`; $('#download').disabled = $('#copy-image').disabled = true;
-            ++outputGeneration; clearTimeout(resizeTimer); resizeTimer = setTimeout(resizeOutput, 180);
+            $('#output-scale-value').textContent = `${event.target.value}%`; scheduleOutput();
         });
-        on($('#output-scale'), 'change', () => { clearTimeout(resizeTimer); resizeOutput(); });
-        on($('#copy-image'), 'click', async () => {
-            if (!resultBlob || !resultURL) return;
+        async function outputAction(button, action) {
+            if (button.getAttribute('aria-busy') === 'true') return;
+            button.setAttribute('aria-busy', 'true');
+            try { await action(); }
+            catch (error) { if (frame.isConnected) notify(error.message, true); }
+            finally { button.removeAttribute('aria-busy'); }
+        }
+        on($('#copy-image'), 'click', event => outputAction(event.currentTarget, async () => {
             if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') { notify('이 브라우저는 이미지 클립보드 복사를 지원하지 않습니다.', true); return; }
             try {
                 const png = (async () => {
-                    if (resultBlob.type === 'image/png') return resultBlob;
+                    const blob = await outputBlob(true);
+                    if (!blob) throw new Error('저장할 이미지가 없습니다.');
+                    if (blob.type === 'image/png') return blob;
                     return encodedOutput('png', outputGeneration);
                 })();
                 await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
                 notify('이미지를 복사했습니다.', false, 2000);
             } catch (error) { notify(`이미지를 복사하지 못했습니다. ${error.message}`, true); }
-        });
-        on($('#download'), 'click', () => {
-            if (!resultBlob || !resultURL) return;
+        }));
+        on($('#download'), 'click', event => outputAction(event.currentTarget, async () => {
+            const blob = await outputBlob(true);
+            if (!blob || !resultURL) return;
             const label = (config.title.split('\n').find(line => line.trim()) || '로그').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 40);
-            const link = document.createElement('a'); link.href = resultURL; link.download = `${label}_${Date.now()}.${resultBlob.type === 'image/webp' ? 'webp' : 'png'}`;
+            const link = document.createElement('a'); link.href = resultURL; link.download = `${label}_${Date.now()}.${blob.type === 'image/webp' ? 'webp' : 'png'}`;
             document.body.appendChild(link); link.click(); link.remove(); exported = true;
-        });
+        }));
 
         setBusy(true, '선택한 대화의 화면 서식을 가져오는 중…');
         try {
