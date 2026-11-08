@@ -99,23 +99,24 @@
     } catch { /* A missing theme library does not prevent capture. */ }
 
     const resourceCache = new Map();
-    async function requestResource(url, responseType = 'blob') {
+    async function requestResource(url, responseType = 'blob', useGM = false) {
         const parsed = new URL(url, location.href);
         if (!['http:', 'https:', 'data:', 'blob:'].includes(parsed.protocol)) throw new Error('지원하지 않는 리소스 주소입니다.');
-        const key = `${responseType}:${parsed.href}`;
+        const gm = /^https?:$/.test(parsed.protocol) && (useGM || parsed.hostname === location.hostname || GM_RESOURCE_HOSTS.has(parsed.hostname));
+        const key = `${gm ? 'gm' : 'fetch'}:${responseType}:${parsed.href}`;
         if (!resourceCache.has(key)) {
-            const promise = /^(data:|blob:)/.test(parsed.href) || (parsed.hostname !== location.hostname && !GM_RESOURCE_HOSTS.has(parsed.hostname))
-                ? fetch(parsed.href, { credentials: 'omit' }).then(response => {
-                    if (!response.ok) throw new Error(`리소스 요청 실패 (${response.status}) · ${parsed.hostname}`);
+            const promise = !gm
+                ? fetch(parsed.href, { credentials: 'omit' }).catch(error => { throw new Error(`파일을 가져오지 못했습니다 (${error.message}; 오류 코드 확인 불가) · ${parsed.href}`); }).then(response => {
+                    if (!response.ok) throw new Error(`파일 요청 실패 (HTTP ${response.status}) · ${parsed.href}`);
                     return responseType === 'text' ? response.text() : response.blob();
                 })
                 : new Promise((resolve, reject) => GM_xmlhttpRequest({
                     method: 'GET', url: parsed.href, responseType, timeout: 20000,
                     onload: response => response.status >= 200 && response.status < 300
                         ? resolve(responseType === 'text' ? response.responseText : response.response)
-                        : reject(new Error(`리소스 요청 실패 (${response.status}) · ${parsed.hostname}`)),
-                    onerror: () => reject(new Error(`리소스에 연결하지 못했습니다 · ${parsed.hostname}`)),
-                    ontimeout: () => reject(new Error(`리소스 응답 시간이 초과되었습니다 · ${parsed.hostname}`)),
+                        : reject(new Error(`파일 요청 실패 (HTTP ${response.status}) · ${parsed.href}`)),
+                    onerror: response => reject(new Error(`파일 연결 실패 (${response.status || '오류 코드 확인 불가'}${response.error ? `: ${response.error}` : ''}) · ${parsed.href}`)),
+                    ontimeout: () => reject(new Error(`파일 응답 시간 초과 (20초) · ${parsed.href}`)),
                 }));
             resourceCache.set(key, promise.catch(error => { resourceCache.delete(key); throw error; }));
         }
@@ -124,19 +125,19 @@
     const blobData = blob => new Promise((resolve, reject) => {
         const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error('리소스를 읽지 못했습니다.')); reader.readAsDataURL(blob);
     });
-    async function dataResource(url) {
+    async function dataResource(url, useGM = false) {
         if (url.startsWith('data:')) return url;
-        const blob = await requestResource(url);
+        const blob = await requestResource(url, 'blob', useGM);
         if (!blob?.size) throw new Error('빈 리소스가 반환되었습니다.');
         return blobData(blob);
     }
-    async function replaceURLs(value, base) {
+    async function replaceURLs(value, base, useGM = false) {
         const matches = [...value.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)];
         let result = value;
         for (const match of matches) {
             if (!match[2] || match[2].startsWith('#')) continue;
             const url = new URL(match[2], base).href;
-            const data = await dataResource(url);
+            const data = await dataResource(url, useGM);
             result = result.replace(match[0], `url("${data}")`);
         }
         return result;
@@ -564,19 +565,19 @@
             return points.some(point => point >= low && point <= high);
         });
     }
-    async function embeddedFont(block, text, alias = '') {
+    async function embeddedFont(block, text, alias = '', useGM = false) {
         const family = alias || cssField(block.body, 'font-family').replace(/^['"]|['"]$/g, '');
         let source = cssField(block.body, 'src');
         if (/url\(/i.test(source)) source = source.replace(/local\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)\s*,?\s*/gi, '').replace(/,\s*$/, '');
         if (!family || !source || !neededUnicode(cssField(block.body, 'unicode-range'), text)) return '';
-        const localized = await replaceURLs(source, block.base);
+        const localized = await replaceURLs(source, block.base, useGM);
         const descriptors = ['font-style', 'font-weight', 'font-stretch', 'unicode-range'].map(name => {
             const value = cssField(block.body, name);
             return value ? `${name}:${value};` : '';
         }).join('');
         return `@font-face{font-family:${JSON.stringify(family)};src:${localized};font-display:swap;${descriptors}}`;
     }
-    async function sourceFontCSS(context, text) {
+    async function sourceFontCSS(context, text, useGM = false) {
         const blocks = [], seen = new Set();
         async function importedCSS(css, base) {
             blocks.push(...fontBlocks(css, base));
@@ -584,7 +585,7 @@
                 const url = new URL(match[2], base).href;
                 if (seen.has(url)) continue;
                 seen.add(url);
-                await importedCSS(await requestResource(url, 'text'), url);
+                await importedCSS(await requestResource(url, 'text', useGM), url);
             }
         }
         async function sheetRules(sheet) {
@@ -601,7 +602,7 @@
                 await walk(sheet.cssRules);
             } catch {
                 if (sheet.href) {
-                    try { await importedCSS(await requestResource(sheet.href, 'text'), sheet.href); }
+                    try { await importedCSS(await requestResource(sheet.href, 'text', useGM), sheet.href); }
                     catch { context.notes.add('일부 원문 글꼴의 스타일시트에 접근하지 못했습니다.'); }
                 }
             }
@@ -611,7 +612,7 @@
         const result = [];
         for (const block of relevant) {
             if (context.cancelled) break;
-            try { result.push(await embeddedFont(block, text)); }
+            try { result.push(await embeddedFont(block, text, '', useGM)); }
             catch { context.notes.add('일부 원문 글꼴 파일을 불러오지 못했습니다. 기본 대체 글꼴이 사용될 수 있습니다.'); }
         }
         return result.join('\n');
@@ -633,7 +634,7 @@
         for (const image of root.querySelectorAll('img')) {
             if (!image.getClientRects().length) continue;
             if (!image.getAttribute('src')) continue;
-            image.src = await dataResource(image.src);
+            image.src = await dataResource(image.src, true);
             image.removeAttribute('srcset'); image.removeAttribute('sizes');
             try { await image.decode(); } catch { throw new Error('이미지를 해석하지 못했습니다. 이미지 표시를 끄거나 해당 구간을 제외해주세요.'); }
         }
@@ -641,11 +642,11 @@
             if (!element.getClientRects().length) continue;
             for (const property of ['background-image', 'mask-image']) {
                 const value = element.style.getPropertyValue(property);
-                if (value && /url\(/i.test(value)) element.style.setProperty(property, await replaceURLs(value, location.href));
+                if (value && /url\(/i.test(value)) element.style.setProperty(property, await replaceURLs(value, location.href, true));
             }
             if (element.namespaceURI === 'http://www.w3.org/2000/svg' && element.localName === 'image') {
                 const url = element.getAttribute('href') || element.getAttribute('xlink:href');
-                if (url && !url.startsWith('#')) { element.setAttribute('href', await dataResource(new URL(url, location.href).href)); element.removeAttribute('xlink:href'); }
+                if (url && !url.startsWith('#')) { element.setAttribute('href', await dataResource(new URL(url, location.href).href, true)); element.removeAttribute('xlink:href'); }
             }
         }
     }
@@ -1101,16 +1102,16 @@
                 if (frame.isConnected && generation === fontGeneration) { $('#font-family').value = config.font; $('#font-status').textContent = ''; notify(error.message, true); }
             }
         }
-        async function ensureFont(id, record = null) {
+        async function ensureFont(id, record = null, useGM = false) {
             const font = record ? { family: `"Rokku_${record.id}",sans-serif`, custom: record } : FONTS[id];
             if (!font || id === 'source') return;
             const text = page.textContent + '가나다라마바사 ABC 123';
-            const key = `${id}:${[...new Set([...text])].sort().join('')}`;
+            const key = `${id}:${useGM ? 'gm:' : ''}${[...new Set([...text])].sort().join('')}`;
             if (!fontPromises.has(key)) fontPromises.set(key, (async () => {
                 let blocks;
                 if (font.web) {
                     const url = `https://fonts.googleapis.com/css2?family=${font.web.split(' ').join('+')}:wght@400&display=swap`;
-                    blocks = fontBlocks(await requestResource(url, 'text'), url);
+                    blocks = fontBlocks(await requestResource(url, 'text', useGM), url);
                 } else {
                     const source = font.custom.source.trim();
                     if (/^https?:\/\//i.test(source)) {
@@ -1118,7 +1119,7 @@
                     } else blocks = fontBlocks(source, location.href);
                     if (!blocks.length) throw new Error('폰트 파일 URL 또는 @font-face CSS를 입력해주세요.');
                 }
-                const rules = (await Promise.all(blocks.map(block => embeddedFont(block, text, font.custom ? `Rokku_${font.custom.id}` : '')))).filter(Boolean);
+                const rules = (await Promise.all(blocks.map(block => embeddedFont(block, text, font.custom ? `Rokku_${font.custom.id}` : '', useGM)))).filter(Boolean);
                 if (!record && font.custom && !FONTS[id]) return;
                 if (!rules.length) throw new Error('입력한 CSS에서 사용할 수 있는 글꼴을 찾지 못했습니다.');
                 const fresh = rules.filter(rule => !loadedFontRules.has(rule));
@@ -1651,9 +1652,9 @@
             setBusy(true, '이미지와 글꼴을 준비하는 중…'); let capture = null;
             try {
                 const value = config;
-                await ensureFont(value.font);
-                if (value.font === 'source' && (config.title.trim() || layers.querySelector('.text-box'))) await ensureFont('serif');
-                const sourceCSS = await sourceFontCSS(context, page.textContent);
+                await ensureFont(value.font, null, true);
+                if (value.font === 'source' && (config.title.trim() || layers.querySelector('.text-box'))) await ensureFont('serif', null, true);
+                const sourceCSS = await sourceFontCSS(context, page.textContent, true);
                 if (!frame.isConnected) return;
                 if (sourceCSS) $('#source-fonts').textContent = sourceCSS;
                 await d.fonts.ready;
