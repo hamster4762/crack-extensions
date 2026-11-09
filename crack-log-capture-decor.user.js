@@ -1813,7 +1813,7 @@
                 section.append(label, wrapper); messages.appendChild(section);
             }
             if (!messages.children.length) throw new Error('선택한 구간에 표시할 내용이 없습니다.');
-            const maskTile = svgData(svg('<rect width="8" height="8" fill="#adb7a5"/><path d="M0 0h4v4H0zM4 4h4v4H4z" fill="#c3cbbd"/>', 8));
+            const maskTile = svgData(svg('<path d="M0 0h4v4H0zM4 4h4v4H4z" fill="#000" fill-opacity=".04"/><path d="M4 0h4v4H4zM0 4h4v4H0z" fill="#fff" fill-opacity=".04"/>', 8));
             page.style.setProperty('--mask-pattern', `url("${maskTile}")`);
             for (const face of document.fonts) {
                 if (!context.families.has(face.family.replace(/^['"]|['"]$/g, '').toLowerCase())) continue;
