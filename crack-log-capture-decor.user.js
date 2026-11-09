@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.1.3
+// @version      1.1.4
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -348,6 +348,14 @@
         const children = node.shadowRoot ? [...node.shadowRoot.childNodes] : [...node.childNodes];
         children.forEach(child => { const copied = cloneDisplayed(child, context, inDefinition, isNarration, selected); if (copied) clone.appendChild(copied); });
         if (node.namespaceURI !== 'http://www.w3.org/2000/svg') appendPseudo('::after');
+        if (clone.dataset.rkCode && !node.parentElement?.closest('.wrtn-codeblock,.not-wrtn-markdown,pre')) {
+            for (let body = clone.querySelector('pre'); body && body !== clone; body = body.parentElement) {
+                body.dataset.rkCodeBody = 'true';
+                for (let header = body.previousElementSibling; header; header = header.previousElementSibling) {
+                    if (!header.dataset.rkPseudo && header.textContent.trim()) header.dataset.rkCodeHeader = 'true';
+                }
+            }
+        }
         context.svgClone = previousSVG; context.svgSource = previousSourceSVG;
         return clone;
     }
@@ -769,8 +777,12 @@
         [data-divider=double] .rule,[data-divider=double] .divider-sample{height:5px;background:none;border-top:1px solid var(--rule-color);border-bottom:1px solid var(--rule-color)}
         [data-divider=dashed] .rule,[data-divider=dashed] .divider-sample{background:none;border-top:1px dashed var(--rule-color)}
         [data-divider=diamond] .rule:after,[data-divider=diamond] .divider-sample:after{content:"";position:absolute;left:calc(50% - 3px);top:-2px;width:6px;height:6px;background:var(--rule-color);transform:rotate(45deg)}
-        .page.colored-paper [data-rk-code]{border:1px solid var(--dialogue-color,var(--body-color))!important;border-radius:5px}
-        .page.colored-paper [data-rk-code] [data-rk-code]{border:0!important}
+        .page.colored-paper [data-rk-code]{display:block!important;border:1px solid color-mix(in srgb,var(--dialogue-color,var(--body-color)) 50%,transparent)!important;border-radius:6px!important;padding:12px 16px!important;overflow:hidden!important}
+        .page.colored-paper [data-rk-code],.page.colored-paper [data-rk-code] :not([data-rk-mark]){background-color:transparent!important;background-image:none!important}
+        .page.colored-paper [data-rk-code] [data-rk-code],.page.colored-paper [data-rk-code-body]{display:block!important;position:static!important;transform:none!important;border:0!important;border-radius:0!important;padding:0!important;margin:0!important;min-height:0!important;height:auto!important}
+        .page.colored-paper [data-rk-code-header]{display:block!important;margin:0 0 8px!important;padding:0!important;font:12px/1.5 var(--ui)!important;text-align:left!important;opacity:.65!important}
+        .page.colored-paper [data-rk-code-header],.page.colored-paper [data-rk-code-header] *{position:static!important;inset:auto!important;transform:none!important;float:none!important;width:auto!important;height:auto!important;min-height:0!important}
+        .page.colored-paper [data-rk-code-header] *{font:inherit!important;letter-spacing:inherit!important}
         .page.hide-user .message[data-role=user],.page.hide-code [data-rk-code],.page.hide-code .message[data-rk-only=code],.page.hide-images [data-rk-image],.page.hide-images [data-rk-image-block],.page.hide-images .message[data-rk-only=image],.page.hide-dividers .rule,.page.hide-dividers [data-rk-source-divider],.page.hide-roles .role{display:none!important}
         [data-rk-text=narration]{color:var(--narration-color,inherit);fill:var(--narration-color,inherit)}
         [data-rk-text=dialogue]{color:var(--dialogue-color,inherit);fill:var(--dialogue-color,inherit)}
