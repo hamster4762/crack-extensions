@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.1.4
+// @version      1.2.0
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -31,7 +31,7 @@
     const FONT_KEY = 'rokku_user_fonts_v1';
     const STICKER_KEY = 'rokku_user_stickers_v1';
     const THEME_KEY = 'rokku_user_themes_v1';
-    const THEME_KEYS = ['showUser', 'showCode', 'showImages', 'showDividers', 'showRoles', 'user', 'character', 'divider', 'paper', 'pattern', 'patternColor', 'patternOpacity', 'photo', 'font', 'narrationColor', 'dialogueColor', 'fontSize', 'letterSpacing', 'lineHeight', 'paragraphSpacing', 'padding'];
+    const THEME_KEYS = ['captureSize', 'showUser', 'showCode', 'showImages', 'showDividers', 'showRoles', 'user', 'character', 'divider', 'paper', 'pattern', 'patternColor', 'patternOpacity', 'photo', 'font', 'narrationColor', 'dialogueColor', 'fontSize', 'letterSpacing', 'lineHeight', 'paragraphSpacing', 'padding'];
     const GM_RESOURCE_HOSTS = new Set(['crack-api.wrtn.ai', 'fonts.googleapis.com', 'fonts.gstatic.com', 'fe-web-assets.static.wrtn.ai', 'build-assets.static.wrtn.ai', 'wrtn-image-ai-character.static.wrtn.ai', 'cdn.jsdelivr.net', 'raw.githubusercontent.com']);
     const MAX_HISTORY = 20;
     const ICONS = {
@@ -95,7 +95,9 @@
     let customThemes = [];
     try {
         const value = GM_getValue(THEME_KEY, []);
-        if (Array.isArray(value)) customThemes = value.filter(item => item && typeof item.id === 'string' && typeof item.name === 'string' && item.settings && THEME_KEYS.every(key => Object.hasOwn(item.settings, key)));
+        if (Array.isArray(value)) customThemes = value
+            .filter(item => item && typeof item.id === 'string' && typeof item.name === 'string' && item.settings && THEME_KEYS.every(key => key === 'captureSize' || Object.hasOwn(item.settings, key)))
+            .map(item => ({ ...item, settings: { captureSize: 'wide', ...item.settings } }));
     } catch { /* A missing theme library does not prevent capture. */ }
 
     const resourceCache = new Map();
@@ -944,7 +946,7 @@
             <button class="icon floating save" id="export" aria-label="이미지 저장" title="이미지 저장">${icon('download')}</button>
             <div class="dock"><nav class="toolbar" aria-label="편집 도구">${tool('undo', '실행 취소')}${tool('redo', '다시 실행')}<span class="separator"></span>${tool('theme', '테마')}${tool('source', '대화')}${tool('paper', '배경')}${tool('font', '글자')}<span class="separator"></span>${tool('title', '제목')}${tool('sticker', '스티커')}${tool('text', '텍스트 상자')}</nav>
             <section class="popover" id="panel-theme" hidden>${head('테마')}<div class="field">기본 테마</div><div class="theme-grid" id="default-themes"></div><div class="settings-section"><div class="panel-head"><h2>사용자 테마</h2><button class="icon" id="add-theme" aria-label="현재 설정을 테마로 등록" title="현재 설정을 테마로 등록">${icon('plus')}</button></div><form id="theme-form" hidden><label class="field" for="theme-name">테마 이름</label><input class="input" id="theme-name" maxlength="60" required><div class="row" style="margin:10px 0"><button class="secondary" id="cancel-theme" type="button">취소</button><button class="primary" type="submit">등록</button></div></form><div class="status-text" id="empty-themes">등록한 테마가 없습니다.</div><div class="theme-grid" id="user-themes"></div></div></section>
-            <section class="popover" id="panel-source" hidden>${head('대화')}${toggle('show-user', '유저 입력')}${toggle('show-code', '코드블럭')}${toggle('show-images', '이미지')}${toggle('show-dividers', '가름선')}${toggle('show-roles', '역할명')}<div class="settings-section"><label class="field" for="user-label">유저 문구</label><input class="input" id="user-label" maxlength="60"><label class="field" for="character-label">캐릭터 문구</label><input class="input" id="character-label" maxlength="60"><div class="field" id="divider-label">가름선 디자인</div><div class="divider-options" id="divider-options" role="group" aria-labelledby="divider-label">${[['line', '실선'], ['double', '이중선'], ['dashed', '점선'], ['diamond', '다이아몬드']].map(([id, label]) => `<button type="button" class="divider-choice" data-divider-choice="${id}" data-divider="${id}" aria-pressed="false"><span class="divider-preview" aria-hidden="true"><span class="divider-sample"></span></span><span>${label}</span></button>`).join('')}</div></div></section>
+            <section class="popover" id="panel-source" hidden>${head('대화')}<div class="field" id="capture-size-label">크기</div><div class="tabs" id="capture-sizes" role="group" aria-labelledby="capture-size-label"><button type="button" data-capture-size="compact" aria-pressed="false">컴팩트 480px</button><button type="button" data-capture-size="wide" aria-pressed="true">와이드 760px</button></div>${toggle('show-user', '유저 입력')}${toggle('show-code', '코드블럭')}${toggle('show-images', '이미지')}${toggle('show-dividers', '가름선')}${toggle('show-roles', '역할명')}<div class="settings-section"><label class="field" for="user-label">유저 문구</label><input class="input" id="user-label" maxlength="60"><label class="field" for="character-label">캐릭터 문구</label><input class="input" id="character-label" maxlength="60"><div class="field" id="divider-label">가름선 디자인</div><div class="divider-options" id="divider-options" role="group" aria-labelledby="divider-label">${[['line', '실선'], ['double', '이중선'], ['dashed', '점선'], ['diamond', '다이아몬드']].map(([id, label]) => `<button type="button" class="divider-choice" data-divider-choice="${id}" data-divider="${id}" aria-pressed="false"><span class="divider-preview" aria-hidden="true"><span class="divider-sample"></span></span><span>${label}</span></button>`).join('')}</div></div></section>
             <section class="popover" id="panel-paper" hidden>${head('배경')}<div class="pattern-grid" id="patterns"></div><div class="field">종이 색</div>${swatches('paper', ['#17191c', '#fff8e6', '#ffffff', '#edf2e9', '#f7e9e5'], '종이 색')}<fieldset id="pattern-colors"><legend class="field">무늬 색</legend>${swatches('pattern', ['#91ac98', '#9eb9d4', '#cd9f8b', '#b3a0c2', '#b6a084'], '무늬 색')}${range('pattern-opacity', '무늬 농도', 0, 1, .05)}</fieldset><label class="upload">${icon('image')}배경 사진<input id="background-file" type="file" accept="image/*" hidden></label><button class="secondary wide" id="remove-background" hidden>사진 제거</button></section>
             <section class="popover" id="panel-font" hidden>${head('글자·간격·여백', `<button class="icon" id="reset-font" aria-label="글자·간격·여백 초기화" title="글자·간격·여백 초기화">${icon('reset')}</button>`)}<label class="field" for="font-family">본문 글꼴</label><div class="row"><select id="font-family" class="input"></select><button class="icon" id="add-font" aria-label="웹폰트 추가" title="웹폰트 추가">${icon('plus')}</button></div><div class="font-preview" id="font-preview">가나다라마바사 ABC 123</div><div class="status-text" id="font-status" role="status"></div>${textColor('narration', '지문 색')}${textColor('dialogue', '대사 색')}${range('font-size', '글자 크기', 12, 30, 1)}${range('letter-spacing', '자간', -.05, .15, .01)}${range('line-height', '줄 간격', 1.2, 2.8, .05)}${range('paragraph-spacing', '문단 간격', 0, 2.4, .05)}${range('page-padding', '종이 여백', 0, 80, 1)}</section>
             <section class="popover" id="panel-title" hidden>${head('제목')}<form id="title-form"><label class="field" for="title-value">제목</label><textarea id="title-value" class="input" rows="4" placeholder="제목 입력"></textarea><div class="row" style="margin-top:14px"><button class="secondary" id="remove-title" type="button">${icon('trash')}삭제</button><button class="primary" type="submit" style="flex:1">적용</button></div></form></section>
@@ -983,12 +985,13 @@
             if (color !== 'transparent' && !/rgba\([^)]*,\s*0\s*\)/.test(color)) { sourcePaper = compatibleColors(color, context); break; }
         }
         const sourceInk = compatibleColors(getComputedStyle(entries[0].bubble).color, context);
-        const baseFontSize = 16, originalLineHeight = 1.5, width = 760;
+        const baseFontSize = 16, originalLineHeight = 1.5;
+        let width = 760;
         const config = {
             paper: null, narrationColor: null, dialogueColor: null, pattern: 'plain', patternColor: '#8f9d91', patternOpacity: 1, photo: '',
             font: 'source', fontSize: baseFontSize, lineHeight: originalLineHeight, letterSpacing: -.01, paragraphSpacing: 1.2, padding: 46,
             user: 'USER', character: 'CHARACTER', divider: 'line', showUser: true, showCode: true, showImages: true, showDividers: true, showRoles: true,
-            title: '',
+            captureSize: 'wide', title: '',
         };
         const themeDefaults = themeSettings(config);
         const defaultThemes = [
@@ -1041,6 +1044,7 @@
         }
         function refreshControls() {
             for (const [button, settings] of themeCards) button.setAttribute('aria-pressed', String(THEME_KEYS.every(key => config[key] === settings[key])));
+            selectButtons($('#capture-sizes'), '[data-capture-size]', config.captureSize, 'captureSize');
             selectButtons($('#patterns'), '[data-pattern]', config.pattern, 'pattern');
             for (const [name, color] of [['paper', config.paper], ['pattern', config.patternColor], ['narration', config.narrationColor], ['dialogue', config.dialogueColor]]) {
                 $(`#${name}-color`).value = color || (name === 'paper' ? sourcePaper : name === 'narration' ? NARRATION_COLOR : DIALOGUE_COLOR);
@@ -1059,6 +1063,7 @@
         }
         function render() {
             const value = config;
+            width = value.captureSize === 'compact' ? 480 : 760;
             page.classList.toggle('colored-paper', !!value.paper);
             page.dataset.divider = value.divider; page.style.width = `${width}px`;
             if (value.paper) page.style.setProperty('--paper-color', value.paper); else page.style.removeProperty('--paper-color');
@@ -1468,6 +1473,7 @@
                 activeItem.style.top = `${activeItem.offsetTop + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0)}px`; constrainItems(); scheduleHistory();
             }
         });
+        $$('[data-capture-size]').forEach(button => on(button, 'click', () => choose('captureSize', button.dataset.captureSize)));
         for (const [id, key] of [['show-user', 'showUser'], ['show-code', 'showCode'], ['show-images', 'showImages'], ['show-dividers', 'showDividers'], ['show-roles', 'showRoles']]) on($(`#${id}`), 'change', event => choose(key, event.target.checked));
         for (const [id, key] of [['user-label', 'user'], ['character-label', 'character']]) {
             on($(`#${id}`), 'input', event => { config[key] = event.target.value; render(); scheduleHistory(); });
