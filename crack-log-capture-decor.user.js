@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.2.0
+// @version      1.2.1
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -198,10 +198,26 @@
         }
         return result;
     }
+    // grid 컨테이너의 트랙은 getComputedStyle이 원본 너비 기준 px로 굳혀 반환하므로(minmax(0,1fr) → 730px),
+    // 캡처 페이지 너비에 맞게 다시 배치되도록 fr·%·minmax가 남은 계산값을 읽는다.
+    function gridTracks(node, styles) {
+        if (!['grid', 'inline-grid'].includes(styles.display)) return null;
+        const names = ['grid-template-columns', 'grid-template-rows'];
+        if (node.computedStyleMap) { const map = node.computedStyleMap(); return new Map(names.map(name => [name, map.get(name)?.toString()])); }
+        // computedStyleMap이 없는 브라우저(Firefox): 박스가 없는 요소는 계산값을 그대로 돌려주므로 잠시 숨겨서 읽는다.
+        const previous = node.getAttribute('style');
+        node.style.setProperty('display', 'none', 'important');
+        const hidden = node.ownerDocument.defaultView.getComputedStyle(node);
+        const tracks = new Map(names.map(name => [name, hidden.getPropertyValue(name)]));
+        node.setAttribute('style', previous ?? ''); // 바로 removeAttribute하면 Chrome이 style=""를 남긴다
+        if (previous === null) node.removeAttribute('style');
+        return tracks;
+    }
     function copyStyle(source, target, styles, context, pseudo = false) {
+        const tracks = pseudo ? null : gridTracks(source, styles);
         for (const name of STYLE_PROPERTIES) {
             if (name === 'content') continue;
-            const value = styles.getPropertyValue(name);
+            const value = tracks?.get(name) || styles.getPropertyValue(name);
             if (value) target.style.setProperty(name, svgReferences(compatibleColors(value, context), source, context));
         }
         const decorated = source.getRootNode() instanceof ShadowRoot || !!source.shadowRoot;
