@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.2.1
+// @version      1.2.2
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -198,26 +198,24 @@
         }
         return result;
     }
-    // grid 컨테이너의 트랙은 getComputedStyle이 원본 너비 기준 px로 굳혀 반환하므로(minmax(0,1fr) → 730px),
-    // 캡처 페이지 너비에 맞게 다시 배치되도록 fr·%·minmax가 남은 계산값을 읽는다.
-    function gridTracks(node, styles) {
-        if (!['grid', 'inline-grid'].includes(styles.display)) return null;
-        const names = ['grid-template-columns', 'grid-template-rows'];
-        if (node.computedStyleMap) { const map = node.computedStyleMap(); return new Map(names.map(name => [name, map.get(name)?.toString()])); }
-        // computedStyleMap이 없는 브라우저(Firefox): 박스가 없는 요소는 계산값을 그대로 돌려주므로 잠시 숨겨서 읽는다.
+    // getComputedStyle은 grid 트랙과 의사 요소 크기를 원본 화면 레이아웃 기준 px로 굳혀 반환한다
+    // (minmax(0,1fr) → 730px, 세로선 ::before 높이 → 175px). 원본 기기·화면 너비에 따라 캡처가 달라지지 않도록
+    // 박스가 없는(display:none) 상태의 계산값(fr·%·auto 유지)을 잠시 숨겨서 읽는다.
+    function layoutValues(node, pseudo, names) {
         const previous = node.getAttribute('style');
         node.style.setProperty('display', 'none', 'important');
-        const hidden = node.ownerDocument.defaultView.getComputedStyle(node);
-        const tracks = new Map(names.map(name => [name, hidden.getPropertyValue(name)]));
+        const hidden = node.ownerDocument.defaultView.getComputedStyle(node, pseudo || null);
+        const values = new Map(names.map(name => [name, hidden.getPropertyValue(name)]));
         node.setAttribute('style', previous ?? ''); // 바로 removeAttribute하면 Chrome이 style=""를 남긴다
         if (previous === null) node.removeAttribute('style');
-        return tracks;
+        return values;
     }
     function copyStyle(source, target, styles, context, pseudo = false) {
-        const tracks = pseudo ? null : gridTracks(source, styles);
+        const layout = pseudo ? layoutValues(source, pseudo, ['width', 'height'])
+            : ['grid', 'inline-grid'].includes(styles.display) ? layoutValues(source, null, ['grid-template-columns', 'grid-template-rows']) : null;
         for (const name of STYLE_PROPERTIES) {
             if (name === 'content') continue;
-            const value = tracks?.get(name) || styles.getPropertyValue(name);
+            const value = layout?.get(name) || styles.getPropertyValue(name);
             if (value) target.style.setProperty(name, svgReferences(compatibleColors(value, context), source, context));
         }
         const decorated = source.getRootNode() instanceof ShadowRoot || !!source.shadowRoot;
@@ -229,13 +227,15 @@
         target.style.fontSize = `calc(var(--log-size, 16px) * ${decorated ? (parseFloat(styles.fontSize) || 16) / 16 : headingScale})`;
         target.style.fontWeight = styles.fontWeight;
         target.style.fontStyle = styles.fontStyle;
-        target.style.lineHeight = decorated ? `var(--decor-line-height, ${styles.lineHeight})` : 'var(--log-line-height, 1.5)';
+        // 줄간격은 px로 반환되므로 글자 크기 대비 비율로 바꿔, 캡처 글자 크기가 원본과 달라도 줄이 겹치지 않게 한다.
+        const lineHeight = /px$/.test(styles.lineHeight) ? parseFloat(styles.lineHeight) / (parseFloat(styles.fontSize) || 16) : styles.lineHeight;
+        target.style.lineHeight = decorated ? `var(--decor-line-height, ${lineHeight})` : 'var(--log-line-height, 1.5)';
         target.style.letterSpacing = decorated ? `var(--decor-letter-spacing, ${styles.letterSpacing})` : 'var(--log-letter-spacing, -.01em)';
         target.style.transition = 'none'; target.style.animation = 'none';
         const vector = source.namespaceURI === 'http://www.w3.org/2000/svg';
         const graphic = pseudo || vector || ['absolute', 'fixed'].includes(styles.position);
         if (graphic) {
-            target.style.width = styles.width; target.style.height = styles.height;
+            target.style.width = layout?.get('width') || styles.width; target.style.height = layout?.get('height') || styles.height;
             if (pseudo || vector) { target.style.fontSize = styles.fontSize; target.style.lineHeight = styles.lineHeight; target.style.letterSpacing = styles.letterSpacing; }
             if (vector && source.localName === 'svg' && !source.ownerSVGElement) {
                 const width = source.getAttribute('width'), height = source.getAttribute('height');
@@ -355,7 +355,7 @@
             const text = pseudoContent(computed.content);
             if (text === null || computed.display === 'none') return;
             const decoration = document.createElement('span');
-            copyStyle(node, decoration, computed, context, true);
+            copyStyle(node, decoration, computed, context, name);
             decoration.textContent = text; decoration.dataset.rkPseudo = 'true'; clone.appendChild(decoration);
         };
         if (node.namespaceURI !== 'http://www.w3.org/2000/svg') appendPseudo('::before');
