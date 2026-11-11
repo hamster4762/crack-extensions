@@ -12,7 +12,9 @@
     'use strict';
 
     // 입력창 왼쪽 아래 버튼 그룹. 안에 무엇이 있든(다른 확장 버튼 포함) 그룹 단위로만 다룬다.
-    const GROUP = 'div.rounded-lg.border:has(.ProseMirror) > div > div.justify-between > div:first-child';
+    // 다른 확장이 툴바 줄 맨 앞에 버튼 없는 요소(글자수 표시 등)를 끼워 넣을 수 있으므로,
+    // "줄의 첫 번째 자식"이 아니라 "버튼을 직접 가진 첫 번째 자식"을 그룹으로 본다.
+    const GROUP = 'div.rounded-lg.border:has(.ProseMirror) > div > div.justify-between > div:nth-child(1 of :has(> button))';
     const ROOT = document.documentElement;
 
     // DOM은 건드리지 않고 CSS로만 모양을 바꾼다. 그룹이 다시 그려져도 자동 적용된다.
