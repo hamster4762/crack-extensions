@@ -8952,22 +8952,10 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
-  function merge(base, over) {
-    const out = clone(base);
-    if (!over || typeof over !== 'object') return out;
-    for (const k of Object.keys(out)) {
-      if (!(k in over)) continue;
-      if (out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) out[k] = merge(out[k], over[k]);
-      else out[k] = over[k];
-    }
-    return out;
-  }
-  function normalize(s) {
-    const n = merge(DEFAULTS, s);
-    if (!THEME_BY_ID[n.theme]) n.theme = DEFAULTS.theme;
-    n.palette = clamp(Math.round(n.palette) || 0, 0, THEME_BY_ID[n.theme].palettes.length - 1);
-    if (!Array.isArray(n.colors) || n.colors.length !== 12) n.colors = null;
-    return n;
+  function normalizeSettings(s) {
+    if (!THEME_BY_ID[s.theme]) s.theme = DEFAULTS.theme;
+    s.palette = clamp(Math.round(s.palette) || 0, 0, THEME_BY_ID[s.theme].palettes.length - 1);
+    if (!Array.isArray(s.colors) || s.colors.length !== 12) s.colors = null;
   }
 
   // ───────────────────────── 저장소 ─────────────────────────
@@ -8990,6 +8978,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
 
   function openDatabase() {
     const req = indexedDB.open(DB_NAME, 1);
+    // 새 DB를 만들 때 v1 저장소를 초기화한다.
     req.onupgradeneeded = () => {
       const db = req.result;
       db.createObjectStore('meta').add(DATA_VERSION, 'version');
@@ -9866,15 +9855,15 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
       if ((await getRecord(store, 'rooms', room))?.presetId !== id) return;
       const preset = await getRecord(store, 'presets', id);
       if (!preset) return;
-      const { font, bg } = preset.settings;
-      const previousFont = font.id, previousImage = bg.imageId;
-      if (mutator(preset.settings) === false) return;
-      const settings = normalize(preset.settings);
+      const { settings } = preset;
+      const previousFont = settings.font.id, previousImage = settings.bg.imageId;
+      if (mutator(settings) === false) return;
+      normalizeSettings(settings);
       if (settings.font.id && settings.font.id !== previousFont
         && !(await requestResult(store.getKey(['fonts', settings.font.id])))) settings.font.id = null;
       if (settings.bg.imageId && settings.bg.imageId !== previousImage
         && !(await requestResult(store.getKey(['images', settings.bg.imageId])))) settings.bg.imageId = null;
-      put({ ...preset, settings });
+      put(preset);
     });
     const stillSelected = room === roomId() && id === activePreset()?.id;
     if (stillSelected) refreshPreset(!saved || opts.render !== false);
@@ -10661,8 +10650,8 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
     setStyle('ctk-base', BASE_CSS + PANEL_CSS);
     try {
       database = await openDatabase();
-      database.onversionchange = () => database.close();
-      const version = await requestResult(database.transaction('meta').objectStore('meta').get('version'));
+      const meta = database.transaction('meta').objectStore('meta');
+      const version = await requestResult(meta.get('version'));
       if (version !== DATA_VERSION) {
         database.close();
         toast('지원하지 않는 설정 데이터 버전입니다.');
