@@ -8960,7 +8960,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
 
   // ───────────────────────── 저장소 ─────────────────────────
   const data = { rooms: new Map(), presets: new Map(), fonts: new Map() };
-  let S, database, storageChannel;
+  let S, database, openingDatabase, storageChannel;
   const activePreset = (room = roomId()) => data.presets.get(data.rooms.get(room)?.presetId);
 
   function roomCounts() {
@@ -8976,16 +8976,34 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     });
   }
 
-  function openDatabase() {
+  async function openDatabase(allowCreate) {
     const req = indexedDB.open(DB_NAME, 1);
-    // 새 DB를 만들 때 v1 저장소를 초기화한다.
     req.onupgradeneeded = () => {
+      if (!allowCreate) {
+        req.transaction.abort();
+        return;
+      }
       const db = req.result;
       db.createObjectStore('meta').add(DATA_VERSION, 'version');
-      db.createObjectStore(DATA_VERSION, { keyPath: ['kind', 'id'] })
-        .add({ kind: 'presets', id: 'default', name: '기본', settings: clone(DEFAULTS) });
+      db.createObjectStore(DATA_VERSION, { keyPath: ['kind', 'id'] });
     };
-    return requestResult(req);
+    const db = await requestResult(req);
+    try {
+      const meta = db.transaction('meta').objectStore('meta');
+      const version = await requestResult(meta.get('version'));
+      if (version !== DATA_VERSION) throw new DOMException('지원하지 않는 설정 데이터 버전', 'VersionError');
+      return db;
+    } catch (e) {
+      db.close();
+      throw e;
+    }
+  }
+  async function connectDatabase(allowCreate = false) {
+    if (!database && !allowCreate && !(await indexedDB.databases()).some(db => db.name === DB_NAME)) return null;
+    if (database) return database;
+    openingDatabase ||= openDatabase(allowCreate).then(db => { database = db; return db; })
+      .finally(() => { openingDatabase = null; });
+    return openingDatabase;
   }
   async function idb(mode, work) {
     const tx = database.transaction(DATA_VERSION, mode);
@@ -9013,8 +9031,10 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     }
     if (changes.some(c => c.kind === 'images')) clearGallery();
   }
-  async function commit(work) {
+  async function commit(work, allowCreate = false) {
     try {
+      if (allowCreate) await connectDatabase(true);
+      if (!database) return false;
       const changes = await idb('readwrite', async store => {
         const changed = [];
         await work(store, record => {
@@ -9042,6 +9062,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
       && (Object.hasOwn(data, key[0]) || key[0] === 'images') && typeof key[1] === 'string');
     if (!changed.length) return;
     try {
+      if (!(await connectDatabase())) return;
       const records = await idb('readonly', store => Promise.all(changed.map(async ([kind, id]) => ({
         kind, id, record: kind === 'images' ? undefined : await getRecord(store, kind, id),
       }))));
@@ -9872,6 +9893,10 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   async function switchPreset(id) {
     const room = roomId();
     if (!room) return;
+    if (!database && !id) {
+      closePresetList(true);
+      return;
+    }
     const owner = panel;
     const saved = await commit(async (store, put, remove) => {
       const link = await getRecord(store, 'rooms', room);
@@ -10338,7 +10363,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
           put(preset);
         }
       }
-    });
+    }, kind === 'add');
     if (!saved) return;
     refreshPreset();
     if (owner === panel && room === roomId() && (kind === 'rename' || kind === 'delete')) {
@@ -10649,26 +10674,21 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
   async function start() {
     setStyle('ctk-base', BASE_CSS + PANEL_CSS);
     try {
-      database = await openDatabase();
-      const meta = database.transaction('meta').objectStore('meta');
-      const version = await requestResult(meta.get('version'));
-      if (version !== DATA_VERSION) {
-        database.close();
-        toast('지원하지 않는 설정 데이터 버전입니다.');
-        return;
-      }
-      const kinds = Object.keys(data);
-      const loading = idb('readonly', store => Promise.all(kinds.map(kind => listRecords(store, kind))))
-        .then(groups => {
-          groups.forEach((records, i) => records.forEach(record => data[kinds[i]].set(record.id, record)));
-        });
       storageChannel = new BroadcastChannel(DB_NAME);
+      const loading = connectDatabase().then(async db => {
+        if (!db) return;
+        const kinds = Object.keys(data);
+        const groups = await idb('readonly', store => Promise.all(kinds.map(kind => listRecords(store, kind))));
+        groups.forEach((records, i) => records.forEach(record => data[kinds[i]].set(record.id, record)));
+      });
       storageChannel.onmessage = e => loading.then(() => onStorageChange(e)).catch(() => {});
       await loading;
-    } catch (_) {
+    } catch (e) {
       storageChannel?.close();
       database?.close();
-      toast('IndexedDB에서 테마 설정을 열지 못했습니다.');
+      toast(e?.name === 'VersionError'
+        ? '지원하지 않는 설정 데이터 버전입니다.'
+        : 'IndexedDB에서 테마 설정을 열지 못했습니다.');
       return;
     }
     MODE = detectMode();
