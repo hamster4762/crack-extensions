@@ -2,7 +2,7 @@
 // @name         크랙 로그 캡처&꾸미기
 // @namespace    https://crack.wrtn.ai/
 // @icon         data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%223%22%20y%3D%225%22%20width%3D%2218%22%20height%3D%2215%22%20rx%3D%223%22%2F%3E%3Cpath%20d%3D%22m8%205%201-3h6l1%203%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212.5%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E
-// @version      1.2.3
+// @version      1.2.4
 // @description  채팅의 화면 서식을 유지하여 편집하고 이미지로 저장합니다. (version 관리방식: 크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -210,7 +210,7 @@
         if (previous === null) node.removeAttribute('style');
         return values;
     }
-    function copyStyle(source, target, styles, context, pseudo = false) {
+    function copyStyle(source, target, styles, context, pseudo = false, preserveLayout = false) {
         const layout = pseudo ? layoutValues(source, pseudo, ['width', 'height'])
             : ['grid', 'inline-grid'].includes(styles.display) ? layoutValues(source, null, ['grid-template-columns', 'grid-template-rows']) : null;
         for (const name of STYLE_PROPERTIES) {
@@ -218,7 +218,7 @@
             const value = layout?.get(name) || styles.getPropertyValue(name);
             if (value) target.style.setProperty(name, svgReferences(compatibleColors(value, context), source, context));
         }
-        const decorated = source.getRootNode() instanceof ShadowRoot || !!source.shadowRoot;
+        const decorated = preserveLayout || source.getRootNode() instanceof ShadowRoot || !!source.shadowRoot;
         if (styles.backgroundColor !== 'transparent' && !/rgba\([^)]*,\s*0\s*\)/.test(styles.backgroundColor)) target.style.backgroundColor = `var(--paper-color, ${compatibleColors(styles.backgroundColor, context)})`;
         const family = styles.fontFamily;
         family.split(',').forEach(part => context.families.add(part.trim().replace(/^['"]|['"]$/g, '').toLowerCase()));
@@ -245,8 +245,25 @@
                 target.style.height = fixed && height && !/%|vh|vw/.test(height) ? (/^\d+(?:\.\d+)?$/.test(height) ? `${height}px` : height) : small ? styles.height : 'auto';
                 target.style.maxWidth = '100%';
             }
+        } else if (preserveLayout) {
+            for (const name of ['aspect-ratio', 'order', 'align-content', 'justify-items', 'justify-self', 'grid-auto-flow', 'grid-auto-columns', 'grid-auto-rows']) {
+                target.style.setProperty(name, styles.getPropertyValue(name));
+            }
+            if (!['inline', 'contents'].includes(styles.display) || target.localName === 'img') {
+                // 비율과 auto 크기는 캡처 너비에서 다시 계산한다.
+                const names = ['width', 'height'];
+                const sizes = source.computedStyleMap?.();
+                const fallback = sizes ? null : layoutValues(source, null, names);
+                for (const name of names) {
+                    target.style.setProperty(name, sizes?.get(name)?.toString() || fallback?.get(name) || styles.getPropertyValue(name));
+                }
+                target.style.maxWidth = '100%';
+                target.style.minWidth = '0';
+                if (styles.maxWidth !== 'none') target.style.maxWidth = `min(100%, ${styles.maxWidth})`;
+                if (styles.minWidth !== 'auto') target.style.minWidth = `min(100%, ${styles.minWidth})`;
+            }
         } else {
-            Object.assign(target.style, { width: decorated && ['flex', 'inline-flex', 'grid', 'inline-grid'].includes(styles.display) ? '100%' : 'auto', maxWidth: '100%', minWidth: '0', height: 'auto', minHeight: '0', maxHeight: 'none', flexBasis: 'auto', boxSizing: 'border-box' });
+            Object.assign(target.style, { width: 'auto', maxWidth: '100%', minWidth: '0', height: 'auto', minHeight: '0', maxHeight: 'none', flexBasis: 'auto', boxSizing: 'border-box' });
             target.style.overflowY = 'visible';
             if (!decorated && /^(DIV|SECTION|ARTICLE|MAIN|P|H[1-6])$/.test(source.tagName)) {
                 target.style.display = 'block';
@@ -265,7 +282,7 @@
         if (value === 'none' || value === 'normal') return null;
         return [...value.matchAll(/"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'/g)].map(match => (match[1] ?? match[2]).replace(/\\([0-9a-f]{1,6})\s?/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16))).replace(/\\(["'\\])/g, '$1')).join('');
     }
-    function cloneDisplayed(node, context, definition = false, narration = false, selected = false) {
+    function cloneDisplayed(node, context, definition = false, narration = false, selected = false, preserveLayout = false) {
         selected = selected || !!context.units?.has(node);
         if (!definition && context.units && !selected && !context.branches.has(node)) return null;
         if (node.nodeType === Node.TEXT_NODE) {
@@ -290,10 +307,11 @@
         const styles = view.getComputedStyle(node);
         const isNarration = narration || tag === 'em' || tag === 'i' || /^(italic|oblique)/.test(styles.fontStyle);
         if (!inDefinition && (styles.display === 'none' || styles.visibility === 'hidden' || styles.visibility === 'collapse')) return null;
+        preserveLayout = preserveLayout || ['flex', 'inline-flex', 'grid', 'inline-grid'].includes(styles.display);
         if (tag === 'slot') {
             const fragment = document.createDocumentFragment();
             const children = node.assignedNodes({ flatten: true });
-            (children.length ? children : [...node.childNodes]).forEach(child => { const clone = cloneDisplayed(child, context, definition, isNarration, selected); if (clone) fragment.appendChild(clone); });
+            (children.length ? children : [...node.childNodes]).forEach(child => { const clone = cloneDisplayed(child, context, definition, isNarration, selected, preserveLayout); if (clone) fragment.appendChild(clone); });
             return fragment;
         }
         if (tag === 'iframe' || tag === 'object' || tag === 'embed') {
@@ -321,9 +339,9 @@
             clone = document.createElement(safeTag);
             for (const name of ['colspan', 'rowspan', 'start', 'reversed', 'value', 'dir', 'lang', 'alt']) if (node.hasAttribute(name)) clone.setAttribute(name, node.getAttribute(name));
             if (tag === 'a') clone.removeAttribute('href');
-            if (tag === 'img') clone.src = node.src || node.currentSrc;
+            if (tag === 'img') clone.src = node.currentSrc || node.src;
         }
-        copyStyle(node, clone, styles, context);
+        copyStyle(node, clone, styles, context, false, preserveLayout);
         if (isNarration) clone.style.opacity = `var(--narration-opacity, ${styles.opacity})`;
         if (inDefinition) clone.style.removeProperty('display');
         const previousSVG = context.svgClone, previousSourceSVG = context.svgSource;
@@ -340,7 +358,9 @@
             }
         }
         if (tag === 'img' || tag === 'canvas' || tag === 'video') {
-            clone.dataset.rkImage = 'true'; clone.style.maxWidth = '100%'; clone.style.height = 'auto'; clone.loading = 'eager';
+            clone.dataset.rkImage = 'true'; clone.loading = 'eager';
+            if (!clone.style.maxWidth) clone.style.maxWidth = '100%';
+            if (!preserveLayout) clone.style.height = 'auto';
         }
         if (tag === 'pre' || node.matches('.wrtn-codeblock') || (node.matches('.not-wrtn-markdown') && node.querySelector('pre,code'))) {
             clone.dataset.rkCode = 'true';
@@ -364,7 +384,7 @@
             (node.shadowRoot.adoptedStyleSheets || []).forEach(sheet => context.sheets.add(sheet));
         }
         const children = node.shadowRoot ? [...node.shadowRoot.childNodes] : [...node.childNodes];
-        children.forEach(child => { const copied = cloneDisplayed(child, context, inDefinition, isNarration, selected); if (copied) clone.appendChild(copied); });
+        children.forEach(child => { const copied = cloneDisplayed(child, context, inDefinition, isNarration, selected, preserveLayout); if (copied) clone.appendChild(copied); });
         if (node.namespaceURI !== 'http://www.w3.org/2000/svg') appendPseudo('::after');
         if (clone.dataset.rkCode && !node.parentElement?.closest('.wrtn-codeblock,.not-wrtn-markdown,pre')) {
             for (let body = clone.querySelector('pre'); body && body !== clone; body = body.parentElement) {
