@@ -2,41 +2,59 @@
 // @name         Crack Theme Kit (배경·테마)
 // @namespace    crack-theme-kit
 // @description  크랙 채팅 화면에 배경 이미지와 테마를 적용합니다. 채팅방마다 사용할 프리셋을 선택할 수 있습니다. (version 관리방식: 데이터스키마변경.크랙UI변경.기능추가및수정.버그수정)
-// @version      2.0.0.0
+// @version      1.0.0.0
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 
 /*
- * ───────────────────────── 저장 데이터 구조 ─────────────────────────
- *
- * localStorage['crackThemeKit'] = {
- *   roomPresets: { [roomId: string]: string },  // 프리셋을 선택한 채팅방만 저장
- *   presets: Preset[],
- *   fonts: { id: string, name: string, source: string, family?: string }[]
- * }
- *
- * Preset = { id: string, name: string, settings: Settings }
- *
- * Settings = {
- *   theme: string,                     // THEMES[].id
- *   palette: number,                   // 테마 안의 색 조합 번호
- *   autoColors: boolean,               // true면 테마 색 조합 사용, false면 colors 사용
- *   colors: string[12] | null,         // 직접 지정한 색 (THEMES palettes 와 같은 순서)
- *   hl:   { dialogue, thought, italic, strong, code, markdown: boolean },   // 강조 켜기/끄기
- *   text: { scale, codeScale, weight, lineHeight, letterSpacing, paragraph: number, shadow: boolean },
- *   font: { id: string | null, input: boolean, site: boolean },
- *   bg:   { imageId: string | null, blur, dim, zoom, uiOpacity: number,
- *           novelShade: boolean, novelShadeStrength: number },
- *   sendShape: boolean                 // 전송 버튼을 테마 모양으로
- * }
- *
- * IndexedDB 'crackThemeKit' / store 'images' (keyPath 'id')
- *   { id: string, blob: Blob }
- *   설정창 > 배경 목록에 모두 보이고, 사용자가 지울 때만 지워진다.
- *   지우면 그 이미지를 쓰던 프리셋의 bg.imageId 는 null 이 된다.
- * ────────────────────────────────────────────────────────────────────
+ * IndexedDB crack-theme-kit (DB 버전 1)
+ * ├─ meta
+ * │  └─ version → 'v1'
+ * └─ v1 (레코드 키 [kind, id])
+ *    ├─ ['rooms', 채팅방 ID]
+ *    │  └─ presetId: string             // 프리셋을 선택한 방만 저장
+ *    ├─ ['presets', 프리셋 ID]
+ *    │  ├─ name: string
+ *    │  └─ settings
+ *    │     ├─ theme: string             // THEMES[].id
+ *    │     ├─ palette: number
+ *    │     ├─ autoColors: boolean
+ *    │     ├─ colors: string[12] | null  // 팔레트와 같은 순서
+ *    │     ├─ hl
+ *    │     │  ├─ dialogue: boolean
+ *    │     │  ├─ thought: boolean
+ *    │     │  ├─ italic: boolean
+ *    │     │  ├─ strong: boolean
+ *    │     │  ├─ code: boolean
+ *    │     │  └─ markdown: boolean
+ *    │     ├─ text
+ *    │     │  ├─ scale: number
+ *    │     │  ├─ codeScale: number
+ *    │     │  ├─ weight: number
+ *    │     │  ├─ lineHeight: number
+ *    │     │  ├─ letterSpacing: number
+ *    │     │  ├─ paragraph: number
+ *    │     │  └─ shadow: boolean
+ *    │     ├─ font
+ *    │     │  ├─ id: string | null
+ *    │     │  ├─ input: boolean
+ *    │     │  └─ site: boolean
+ *    │     ├─ bg
+ *    │     │  ├─ imageId: string | null
+ *    │     │  ├─ blur: number
+ *    │     │  ├─ dim: number
+ *    │     │  ├─ zoom: number
+ *    │     │  ├─ uiOpacity: number
+ *    │     │  ├─ novelShade: boolean
+ *    │     │  └─ novelShadeStrength: number
+ *    │     └─ sendShape: boolean
+ *    ├─ ['images', 이미지 ID]
+ *    │  └─ blob: Blob
+ *    └─ ['fonts', 폰트 ID]
+ *       ├─ name: string
+ *       └─ source: string
  */
 
 (function () {
@@ -8885,7 +8903,8 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
 
 
   // ───────────────────────── 기본값 ─────────────────────────
-  const KEY = 'crackThemeKit';
+  const DB_NAME = 'crack-theme-kit';
+  const DATA_VERSION = 'v1';
   const CATEGORIES = [
     ['basic', '기본'], ['cute', '귀여움'], ['paper', '종이'],
     ['classic', '고전'], ['scifi', 'SF'], ['nature', '자연'],
@@ -8952,78 +8971,97 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   }
 
   // ───────────────────────── 저장소 ─────────────────────────
-  function readData() {
-    let raw = null;
-    try { raw = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { /* 손상된 값은 기본값으로 시작 */ }
-    const fonts = Array.isArray(raw?.fonts)
-      ? raw.fonts.filter(f => typeof f?.id === 'string' && typeof f.name === 'string' && typeof f.source === 'string')
-      : [];
-    const presets = Array.isArray(raw?.presets)
-      ? raw.presets.filter(p => p?.id).map(p => {
-        const name = String(p.name || '프리셋');
-        const settings = normalize(p.settings);
-        const legacy = p.settings?.font;
-        const source = typeof legacy?.source === 'string' ? legacy.source.trim() : '';
-        if (source && !settings.font.id) {
-          const family = typeof legacy.family === 'string' ? legacy.family.trim() : '';
-          let font = fonts.find(f => f.source === source && (f.family || '') === family);
-          if (!font) {
-            font = { id: uid(), name: family || fontFaces(source)[0]?.family || name, source, family };
-            fonts.push(font);
-          }
-          settings.font.id = font.id;
-        }
-        return { id: String(p.id), name, settings };
-      })
-      : [{ id: 'default', name: '기본', settings: normalize(null) }];
-    const ids = new Set(presets.map(p => p.id));
-    const roomPresets = Object.create(null);
-    for (const [room, id] of Object.entries(raw?.roomPresets || {})) {
-      if (ids.has(id)) roomPresets[room] = id;
-    }
-    return { roomPresets, presets, fonts };
-  }
-  let data, S;
-  const activePreset = (room = roomId()) => room ? data.presets.find(p => p.id === data.roomPresets[room]) : undefined;
+  const data = { rooms: new Map(), presets: new Map(), fonts: new Map() };
+  let S, database, storageChannel;
+  const activePreset = (room = roomId()) => data.presets.get(data.rooms.get(room)?.presetId);
 
   function roomCounts() {
     const counts = new Map();
-    for (const id of Object.values(data.roomPresets)) counts.set(id, (counts.get(id) || 0) + 1);
+    for (const { presetId } of data.rooms.values()) counts.set(presetId, (counts.get(presetId) || 0) + 1);
     return counts;
   }
 
-  function persist() {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(data));
-    } catch (e) {
-      toast('설정을 저장하지 못했습니다. 브라우저 저장공간이 가득 찼는지 확인해 주세요.');
-    }
+  function requestResult(req) {
+    return new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
   }
 
-  let dbPromise = null;
-  function db() {
-    dbPromise ||= new Promise((res, rej) => {
-      const r = indexedDB.open(KEY, 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('images', { keyPath: 'id' });
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    return dbPromise;
+  function openDatabase() {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      db.createObjectStore('meta').add(DATA_VERSION, 'version');
+      db.createObjectStore(DATA_VERSION, { keyPath: ['kind', 'id'] })
+        .add({ kind: 'presets', id: 'default', name: '기본', settings: clone(DEFAULTS) });
+    };
+    return requestResult(req);
   }
-  async function idb(mode, fn) {
-    const d = await db();
-    return new Promise((res, rej) => {
-      const tx = d.transaction('images', mode);
-      const req = fn(tx.objectStore('images'));
-      tx.oncomplete = () => res(req?.result);
-      tx.onerror = () => rej(tx.error);
-      tx.onabort = () => rej(tx.error);
+  async function idb(mode, work) {
+    const tx = database.transaction(DATA_VERSION, mode);
+    const done = new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onabort = () => reject(tx.error);
     });
+    try {
+      const [result] = await Promise.all([work(tx.objectStore(DATA_VERSION)), done]);
+      return result;
+    } catch (error) {
+      try { tx.abort(); } catch (_) { /* 이미 끝난 트랜잭션 */ }
+      await done.catch(() => {});
+      throw error;
+    }
   }
-  const getImage = id => idb('readonly', st => st.get(id));
-  const putImage = rec => idb('readwrite', st => st.put(rec));
-  const deleteImage = id => idb('readwrite', st => st.delete(id));
-  const listImages = () => idb('readonly', st => st.getAll());
+  const getRecord = (store, kind, id) => requestResult(store.get([kind, id]));
+  const listRecords = (store, kind) => requestResult(store.getAll(IDBKeyRange.bound([kind], [kind, []])));
+
+  function cacheChanges(changes) {
+    for (const { kind, id, record } of changes) {
+      const cache = data[kind];
+      if (!cache) continue;
+      if (record) cache.set(id, record); else cache.delete(id);
+    }
+    if (changes.some(c => c.kind === 'images')) clearGallery();
+  }
+  async function commit(work) {
+    try {
+      const changes = await idb('readwrite', async store => {
+        const changed = [];
+        await work(store, record => {
+          store.put(record);
+          changed.push({ kind: record.kind, id: record.id, record });
+        }, (kind, id) => {
+          store.delete([kind, id]);
+          changed.push({ kind, id });
+        });
+        return changed;
+      });
+      cacheChanges(changes);
+      if (changes.length) storageChannel?.postMessage(changes.map(({ kind, id }) => [kind, id]));
+      return true;
+    } catch (e) {
+      toast(e?.name === 'QuotaExceededError'
+        ? '브라우저 저장공간이 부족해 변경 사항을 저장하지 못했습니다.'
+        : '변경 사항을 IndexedDB에 저장하지 못했습니다.');
+      return false;
+    }
+  }
+  async function onStorageChange({ data: keys }) {
+    if (!Array.isArray(keys)) return;
+    const changed = keys.filter(key => Array.isArray(key) && key.length === 2 && typeof key[0] === 'string'
+      && (Object.hasOwn(data, key[0]) || key[0] === 'images') && typeof key[1] === 'string');
+    if (!changed.length) return;
+    try {
+      const records = await idb('readonly', store => Promise.all(changed.map(async ([kind, id]) => ({
+        kind, id, record: kind === 'images' ? undefined : await getRecord(store, kind, id),
+      }))));
+      cacheChanges(records);
+      refreshPreset();
+    } catch (_) {
+      toast('다른 탭에서 변경한 설정을 불러오지 못했습니다.');
+    }
+  }
 
   // ───────────────────────── 화면 모드 (다크/라이트) ─────────────────────────
   function detectMode() {
@@ -9152,7 +9190,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   };
   const cssString = s => '"' + s.replace(/["\\\n\r\f]/g, c => '\\' + c.codePointAt(0).toString(16) + ' ') + '"';
   const fontVar = id => '--ctk-font-' + CSS.escape(id);
-  const fontOf = s => data.fonts.find(f => f.id === s?.font.id);
+  const fontOf = s => data.fonts.get(s?.font.id);
 
   function fontFaces(css, base) {
     const faces = [];
@@ -9170,7 +9208,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     return faces;
   }
   function fontDefinition(font) {
-    const { source, id, name, family } = font;
+    const { source, id, name } = font;
     const previous = fontDefinitions.get(font);
     const url = previous ? previous.url : /@font-?face\s*\{/i.test(source) ? '' : fontUrlOf(source);
     const remoteFaces = fontCache.get(url);
@@ -9182,11 +9220,11 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
       css = '@font-face{font-family:' + alias + ';src:url(' + cssString(source) + ');font-display:swap}';
     } else {
       const faces = remoteFaces || fontFaces(source);
-      const actual = faces.find(f => f.family === family)?.family || faces.find(f => f.family === name)?.family || faces[0]?.family;
+      const actual = faces.find(f => f.family === name)?.family || faces[0]?.family;
       if (actual) {
         css = faces.filter(f => f.family === actual).map(f => f.rule.replace(FACE_FAMILY, () => 'font-family:' + alias)).join('\n');
       } else {
-        stack = cssString(typeof family === 'string' && family ? family : name);
+        stack = cssString(name);
       }
     }
     const definition = { stack, css, url, remoteFaces };
@@ -9200,7 +9238,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   function syncFonts() {
     const previews = panel && tab === 'text' && S;
     const selected = fontOf(S);
-    const fonts = previews ? data.fonts : selected ? [selected] : [];
+    const fonts = previews ? data.fonts.values() : selected ? [selected] : [];
     const imports = new Set(), faces = new Set(), vars = [];
     for (const font of fonts) {
       const { css, stack, url } = fontDefinition(font);
@@ -9298,7 +9336,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     if (id !== bgUrlId) {
       html.classList.remove('ctk-bg-image-active');
       const token = ++bgToken;
-      const rec = await getImage(id).catch(() => null);
+      const rec = await idb('readonly', store => getRecord(store, 'images', id)).catch(() => null);
       if (token !== bgToken || activePreset()?.settings.bg.imageId !== id) return;
       if (bgUrl) URL.revokeObjectURL(bgUrl);
       bgUrl = rec?.blob ? URL.createObjectURL(rec.blob) : '';
@@ -9749,7 +9787,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     if (location.pathname !== path) {
       path = location.pathname;
       quoteKey = '';
-      S = activePreset()?.settings;
+      loadCurrentSettings();
       staticDirty = true;
       if (S && appliedTheme === S.theme) document.querySelectorAll('main ' + SEL.group).forEach(g => dirty.add(g));
       applyAll();
@@ -9821,31 +9859,49 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   }
 
   // 지금 프리셋의 설정을 바꾸고 저장·적용한다. render:false면 설정창은 호출한 쪽이 직접 고친다.
-  function update(mutator, opts = {}) {
-    const preset = activePreset();
-    if (!preset) return;
-    mutator(S);
-    preset.settings = S = normalize(S);
-    persist();
-    applyAll();
-    if (panel && opts.render !== false) renderPanel();
+  async function update(mutator, opts = {}) {
+    const room = roomId(), id = activePreset(room)?.id;
+    if (!id) return false;
+    const saved = await commit(async (store, put) => {
+      if ((await getRecord(store, 'rooms', room))?.presetId !== id) return;
+      const preset = await getRecord(store, 'presets', id);
+      if (!preset) return;
+      const { font, bg } = preset.settings;
+      const previousFont = font.id, previousImage = bg.imageId;
+      if (mutator(preset.settings) === false) return;
+      const settings = normalize(preset.settings);
+      if (settings.font.id && settings.font.id !== previousFont
+        && !(await requestResult(store.getKey(['fonts', settings.font.id])))) settings.font.id = null;
+      if (settings.bg.imageId && settings.bg.imageId !== previousImage
+        && !(await requestResult(store.getKey(['images', settings.bg.imageId])))) settings.bg.imageId = null;
+      put({ ...preset, settings });
+    });
+    const stillSelected = room === roomId() && id === activePreset()?.id;
+    if (stillSelected) refreshPreset(!saved || opts.render !== false);
+    return saved && stillSelected;
   }
-  function switchPreset(id) {
+  async function switchPreset(id) {
     const room = roomId();
-    if (room && (data.roomPresets[room] || '') !== id) {
-      if (id) data.roomPresets[room] = id;
-      else delete data.roomPresets[room];
-      persist();
-      refreshPreset();
-    } else {
-      closePresetList();
-    }
-    panel?.querySelector('.ctk-preset summary').focus();
+    if (!room) return;
+    const owner = panel;
+    const saved = await commit(async (store, put, remove) => {
+      const link = await getRecord(store, 'rooms', room);
+      if ((link?.presetId || '') === id) return;
+      if (!id) remove('rooms', room);
+      else if (await requestResult(store.getKey(['presets', id]))) put({ kind: 'rooms', id: room, presetId: id });
+    });
+    if (!saved) return;
+    refreshPreset();
+    if (panel && panel === owner && room === roomId()) panel.querySelector('.ctk-preset summary').focus();
   }
-  function refreshPreset() {
-    S = activePreset()?.settings;
+  function loadCurrentSettings() {
+    const preset = activePreset();
+    S = preset ? clone(preset.settings) : undefined;
+  }
+  function refreshPreset(render = true) {
+    loadCurrentSettings();
     applyAll();
-    if (panel) renderPanel();
+    if (panel && render) renderPanel();
   }
 
   function openPanel() {
@@ -9870,8 +9926,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     if (!panel) return;
     closePop();
     panelRO.disconnect();
-    gallery?.forEach(g => URL.revokeObjectURL(g.url));
-    gallery = null;
+    clearGallery();
     panel.remove();
     panel = null;
     syncFonts();
@@ -9979,7 +10034,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
       <summary aria-label="프리셋: ${esc(selected?.name || '미설정')}"><span class="ctk-preset-name">${esc(selected?.name || '미설정')}</span>${selected ? count(selected) : ''}${icon.chevron}</summary>
       <div class="ctk-preset-list" role="group" aria-label="프리셋 목록">
         <div class="ctk-preset-row"><button type="button" class="ctk-preset-pick" data-act="preset-pick" data-id="" aria-pressed="${!selected}" ${disabled}>미설정</button></div>
-        ${data.presets.map(p => `<div class="ctk-preset-row">
+        ${[...data.presets.values()].map(p => `<div class="ctk-preset-row">
           <button type="button" class="ctk-preset-pick" data-act="preset-pick" data-id="${esc(p.id)}" title="${esc(p.name)}" aria-label="${esc(p.name)}, 채팅방 ${counts.get(p.id) || 0}개에서 사용 중" aria-pressed="${p === selected}" ${disabled}><span class="ctk-preset-name">${esc(p.name)}</span>${count(p)}</button>
           <button type="button" class="ctk-icon" data-act="preset-rename" data-id="${esc(p.id)}" title="이름 바꾸기" aria-label="${esc(p.name)} 이름 바꾸기">${icon.pencil}</button>
           <button type="button" class="ctk-icon" data-act="preset-delete" data-id="${esc(p.id)}" title="프리셋 삭제" aria-label="${esc(p.name)} 삭제">${icon.trash}</button>
@@ -10033,22 +10088,28 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
         <div class="ctk-chips" role="tablist" aria-label="테마 분류">${cats.map(([k, l]) => `<button type="button" role="tab" aria-selected="${themeCat === k}" data-cat="${k}">${esc(l)}</button>`).join('')}</div></div>
       <div class="ctk-themes">${themeList()}</div>`;
   }
-  function refreshTheme(prevTheme) {
+  function refreshTheme() {
+    const prevTheme = panel.querySelector('.ctk-card[aria-checked="true"]')?.dataset.theme;
     panel.querySelector('[data-pstrip]').outerHTML = paletteStrip();
     panel.querySelectorAll('.ctk-card').forEach(c => c.setAttribute('aria-checked', String(c.dataset.theme === S.theme)));
     mountMinis([...new Set([prevTheme, S.theme])].map(id => panel.querySelector(`[data-mini="${id}"]`)).filter(Boolean));
   }
 
   // ── 배경
+  function clearGallery() {
+    gallery?.forEach(g => URL.revokeObjectURL(g.url));
+    gallery = null;
+    galleryFailed = false;
+  }
   async function loadGallery() {
     const owner = panel;
-    gallery = [];
+    const loading = gallery = [];
     try {
-      const recs = await listImages();
-      if (owner !== panel) return;
+      const recs = await idb('readonly', store => listRecords(store, 'images'));
+      if (owner !== panel || loading !== gallery) return;
       gallery = recs.map(r => ({ id: r.id, url: URL.createObjectURL(r.blob) }));
     } catch (_) {
-      if (owner !== panel) return;
+      if (owner !== panel || loading !== gallery) return;
       galleryFailed = true;
     }
     if (panel && tab === 'bg') renderPanel();
@@ -10078,7 +10139,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   // ── 글자
   function fontGalleryHtml() {
     const add = `<button type="button" class="ctk-tile add" data-act="font-add" title="웹폰트 추가" aria-label="웹폰트 추가">${icon.plus}</button>`;
-    const tiles = data.fonts.map(f => {
+    const tiles = [...data.fonts.values()].map(f => {
       const on = f.id === S.font.id;
       return `<div class="ctk-tile" ${on ? 'data-on' : ''}>
         <button type="button" class="ctk-tile-pick ctk-font-pick" data-act="font-pick" data-id="${esc(f.id)}" title="${esc(f.name)}" aria-label="${esc(f.name)} ${on ? '적용 해제' : '적용'}" aria-pressed="${on}">
@@ -10208,13 +10269,13 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   // ───────────────────────── 팝오버 (이름 입력·삭제 확인) ─────────────────────────
   function openPop(anchor, kind, id) {
     closePop();
-    const preset = data.presets.find(p => p.id === id);
-    const font = data.fonts.find(f => f.id === id);
+    const preset = data.presets.get(id);
+    const font = data.fonts.get(id);
     const rooms = kind === 'delete' ? roomCounts().get(id) || 0 : 0;
-    const imgUsers = kind === 'image-delete' ? data.presets.filter(p => p.settings.bg.imageId === id).length : 0;
-    const fontUsers = kind === 'font-delete' ? data.presets.filter(p => p.settings.font.id === id).length : 0;
+    const imgUsers = kind === 'image-delete' ? [...data.presets.values()].filter(p => p.settings.bg.imageId === id).length : 0;
+    const fontUsers = kind === 'font-delete' ? [...data.presets.values()].filter(p => p.settings.font.id === id).length : 0;
     const body = {
-      add: `<label><span>${S ? '새 프리셋 (지금 설정 복사)' : '새 프리셋 이름'}</span><input class="ctk-input" data-pop-name maxlength="40" value="${esc(`프리셋 ${data.presets.length + 1}`)}"></label>`,
+      add: `<label><span>${S ? '새 프리셋 (지금 설정 복사)' : '새 프리셋 이름'}</span><input class="ctk-input" data-pop-name maxlength="40" value="${esc(`프리셋 ${data.presets.size + 1}`)}"></label>`,
       rename: `<label><span>프리셋 이름</span><input class="ctk-input" data-pop-name maxlength="40" value="${esc(preset?.name)}"></label>`,
       delete: `<p>'${esc(preset?.name)}' 프리셋을 삭제할까요? 채팅방 ${rooms}개에서 사용 중입니다.${rooms ? ' 삭제하면 해당 채팅방은 미설정이 됩니다.' : ''}</p>`,
       'image-delete': `<p>이미지를 삭제할까요?${imgUsers ? ` 프리셋 ${imgUsers}개에서 배경으로 쓰는 중입니다.` : ''}</p>`,
@@ -10246,7 +10307,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     if (focus) popAnchor?.focus();
     popAnchor = null;
   }
-  function popOk() {
+  async function popOk() {
     const { kind, id } = pop.dataset;
     const name = pop.querySelector('[data-pop-name]')?.value.trim();
     const source = pop.querySelector('[data-pop-source]')?.value.trim();
@@ -10259,40 +10320,48 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
         return;
       }
     }
+    const owner = panel;
+    const room = roomId(), activeId = activePreset(room)?.id;
     closePop();
-    if (kind === 'add') {
-      const p = { id: uid(), name: name || `프리셋 ${data.presets.length + 1}`, settings: clone(S || DEFAULTS) };
-      data.presets.push(p);
-      if (roomId()) { switchPreset(p.id); return; }
-    } else if (kind === 'rename') {
-      data.presets.find(p => p.id === id).name = name;
-    } else if (kind === 'delete') {
-      data.presets = data.presets.filter(p => p.id !== id);
-      for (const [room, presetId] of Object.entries(data.roomPresets)) {
-        if (presetId === id) delete data.roomPresets[room];
+    const saved = await commit(async (store, put, remove) => {
+      if (kind === 'add') {
+        const current = activeId ? await getRecord(store, 'presets', activeId) : null;
+        const preset = { kind: 'presets', id: uid(), name: name || `프리셋 ${data.presets.size + 1}`, settings: clone(current?.settings || DEFAULTS) };
+        put(preset);
+        if (room) put({ kind: 'rooms', id: room, presetId: preset.id });
+      } else if (kind === 'rename') {
+        const preset = await getRecord(store, 'presets', id);
+        if (preset) put({ ...preset, name });
+      } else if (kind === 'delete') {
+        remove('presets', id);
+        for (const link of await listRecords(store, 'rooms')) {
+          if (link.presetId === id) remove('rooms', link.id);
+        }
+      } else if (kind === 'font-add') {
+        put({ kind: 'fonts', id: uid(), name, source });
+      } else {
+        const isFont = kind === 'font-delete';
+        const field = isFont ? 'font.id' : 'bg.imageId';
+        remove(isFont ? 'fonts' : 'images', id);
+        for (const preset of await listRecords(store, 'presets')) {
+          if (getPath(preset.settings, field) !== id) continue;
+          setPath(preset.settings, field, null);
+          put(preset);
+        }
       }
-    } else if (kind === 'font-add') {
-      data.fonts.push({ id: uid(), name, source });
-    } else if (kind === 'font-delete') {
-      data.fonts = data.fonts.filter(f => f.id !== id);
-      data.presets.forEach(p => { if (p.settings.font.id === id) p.settings.font.id = null; });
-    } else if (kind === 'image-delete') {
-      data.presets.forEach(p => { if (p.settings.bg.imageId === id) p.settings.bg.imageId = null; });
-      const g = gallery?.find(x => x.id === id);
-      if (g) { URL.revokeObjectURL(g.url); gallery.splice(gallery.indexOf(g), 1); }
-      deleteImage(id).catch(() => toast('이미지를 저장소에서 지우지 못했습니다. 브라우저가 IndexedDB 저장소를 막고 있는지 확인해 주세요.'));
-    }
-    persist();
+    });
+    if (!saved) return;
     refreshPreset();
-    if (kind === 'rename' || kind === 'delete') {
+    if (owner === panel && room === roomId() && (kind === 'rename' || kind === 'delete')) {
       const list = panel.querySelector('.ctk-preset');
       list.open = true;
       list.querySelector('summary').focus();
     }
+    if (owner === panel && room === roomId() && kind === 'add') panel.querySelector('.ctk-preset summary').focus();
   }
 
   // ───────────────────────── 설정창 이벤트 ─────────────────────────
-  function onPanelClick(e) {
+  async function onPanelClick(e) {
     if (path !== location.pathname) { flush(); return; }
     if (pop && !pop.contains(e.target)) closePop();
     const b = e.target.closest('button');
@@ -10308,22 +10377,28 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
       return;
     }
     if (d.theme) {
-      if (d.theme === S.theme) return;
-      const prev = S.theme;
-      update(s => { s.theme = d.theme; s.palette = 0; }, { render: false });
-      refreshTheme(prev);
+      const saved = await update(s => {
+        if (d.theme === s.theme) return false;
+        s.theme = d.theme;
+        s.palette = 0;
+      }, { render: false });
+      if (saved && panel?.contains(b)) refreshTheme();
       return;
     }
     if (d.palette) {
-      if (Number(d.palette) === S.palette) return;
-      update(s => { s.palette = Number(d.palette); }, { render: false });
-      refreshTheme(S.theme);
+      const theme = S.theme, palette = Number(d.palette);
+      const saved = await update(s => {
+        if (s.theme !== theme || s.palette === palette) return false;
+        s.palette = palette;
+      }, { render: false });
+      if (saved && panel?.contains(b)) refreshTheme();
       return;
     }
     if (d.toggle === 'sendShape') {
-      update(s => { s.sendShape = !s.sendShape; }, { render: false });
-      b.setAttribute('aria-checked', String(S.sendShape));
-      mountMinis([panel.querySelector(`[data-mini="${S.theme}"]`)].filter(Boolean));
+      if (await update(s => { s.sendShape = !s.sendShape; }, { render: false }) && panel?.contains(b)) {
+        b.setAttribute('aria-checked', String(S.sendShape));
+        mountMinis([panel.querySelector(`[data-mini="${S.theme}"]`)].filter(Boolean));
+      }
       return;
     }
     if (d.toggle) {
@@ -10372,33 +10447,41 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
       applyVars(document.documentElement, S, MODE);
     }
   }
-  function onPanelChange(e) {
+  async function onPanelChange(e) {
     if (!S || path !== location.pathname) return;
     const el = e.target;
-    if (el.dataset.range) { persist(); syncResets(); return; }
-    if (el.dataset.color) { update(() => {}); return; }
+    if (el.dataset.range) {
+      const value = Number(el.value);
+      if (await update(s => setPath(s, el.dataset.range, value), { render: false }) && panel?.contains(el)) syncResets();
+      return;
+    }
+    if (el.dataset.color) {
+      const value = el.value;
+      update(s => {
+        if (!s.colors) s.colors = [...colorsOf(s, MODE)];
+        s.colors[Number(el.dataset.color)] = value;
+      });
+      return;
+    }
     if ('file' in el.dataset) { addImage(el.files?.[0]); el.value = ''; }
   }
   async function addImage(file) {
     if (!file) return;
     if (!file.type.startsWith('image/')) { toast('이미지 파일만 추가할 수 있습니다.'); return; }
+    const room = roomId(), presetId = activePreset(room)?.id;
     const id = uid();
-    const room = roomId(), presetId = activePreset()?.id;
-    try {
-      await putImage({ id, blob: file });
-    } catch (e) {
-      toast(e?.name === 'QuotaExceededError'
-        ? '브라우저 저장공간이 부족해 이미지를 추가하지 못했습니다. 안 쓰는 이미지를 지운 뒤 다시 시도해 주세요.'
-        : '이미지를 추가하지 못했습니다. 브라우저가 IndexedDB 저장소를 막고 있는지 확인해 주세요.');
-      return;
-    }
-    gallery?.push({ id, url: URL.createObjectURL(file) });
-    const preset = activePreset(room);
-    if (preset && preset.id === presetId) {
-      preset.settings.bg.imageId = id;
-      persist();
-    }
-    refreshPreset();
+    const saved = await commit(async (store, put) => {
+      put({ kind: 'images', id, blob: file });
+      if (!presetId) return;
+      const link = await getRecord(store, 'rooms', room);
+      if (link?.presetId !== presetId) return;
+      const preset = await getRecord(store, 'presets', presetId);
+      if (preset) {
+        preset.settings.bg.imageId = id;
+        put(preset);
+      }
+    });
+    if (saved) refreshPreset();
   }
 
   // ───────────────────────── 고정 CSS ─────────────────────────
@@ -10574,9 +10657,31 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
 `;
 
   // ───────────────────────── 시작 ─────────────────────────
-  function start() {
-    data = readData();
+  async function start() {
     setStyle('ctk-base', BASE_CSS + PANEL_CSS);
+    try {
+      database = await openDatabase();
+      database.onversionchange = () => database.close();
+      const version = await requestResult(database.transaction('meta').objectStore('meta').get('version'));
+      if (version !== DATA_VERSION) {
+        database.close();
+        toast('지원하지 않는 설정 데이터 버전입니다.');
+        return;
+      }
+      const kinds = Object.keys(data);
+      const loading = idb('readonly', store => Promise.all(kinds.map(kind => listRecords(store, kind))))
+        .then(groups => {
+          groups.forEach((records, i) => records.forEach(record => data[kinds[i]].set(record.id, record)));
+        });
+      storageChannel = new BroadcastChannel(DB_NAME);
+      storageChannel.onmessage = e => loading.then(() => onStorageChange(e)).catch(() => {});
+      await loading;
+    } catch (_) {
+      storageChannel?.close();
+      database?.close();
+      toast('IndexedDB에서 테마 설정을 열지 못했습니다.');
+      return;
+    }
     MODE = detectMode();
     // 크랙의 다크/라이트 전환은 html·body 속성 변화로만 나타난다.
     new MutationObserver(() => {
@@ -10594,11 +10699,6 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
     new MutationObserver(onMutations).observe(document.body, { childList: true, subtree: true });
     window.addEventListener('popstate', () => {
       if (location.pathname !== path) flush();
-    });
-    window.addEventListener('storage', e => {
-      if (e.storageArea !== localStorage || (e.key !== KEY && e.key !== null)) return;
-      data = readData();
-      refreshPreset();
     });
     flush();
   }
