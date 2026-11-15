@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Crack Theme Kit (배경·테마)
 // @namespace    crack-theme-kit
-// @description  크랙 채팅 화면에 배경 이미지와 테마를 적용합니다. 설정은 모든 방에 공통이고, 프리셋으로 저장·불러올 수 있습니다. (version 관리방식: 데이터스키마변경.크랙UI변경.기능추가및수정.버그수정)
-// @version      1.0.0.0
+// @description  크랙 채팅 화면에 배경 이미지와 테마를 적용합니다. 채팅방마다 사용할 프리셋을 선택할 수 있습니다. (version 관리방식: 데이터스키마변경.크랙UI변경.기능추가및수정.버그수정)
+// @version      2.0.0.0
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
@@ -12,10 +12,10 @@
  * ───────────────────────── 저장 데이터 구조 ─────────────────────────
  *
  * localStorage['crackThemeKit'] = {
- *   active: string,                    // 지금 쓰는 프리셋 id. 설정을 바꾸면 이 프리셋에 바로 저장된다.
- *   presets: Preset[]                  // 항상 1개 이상. 처음에는 '기본' 하나.
+ *   roomPresets: { [roomId: string]: string },  // 프리셋을 선택한 채팅방만 저장
+ *   presets: Preset[],
+ *   fonts: { id: string, name: string, source: string, family?: string }[]
  * }
- * 모든 채팅방이 같은 프리셋을 쓴다.
  *
  * Preset = { id: string, name: string, settings: Settings }
  *
@@ -26,7 +26,7 @@
  *   colors: string[12] | null,         // 직접 지정한 색 (THEMES palettes 와 같은 순서)
  *   hl:   { dialogue, thought, italic, strong, code, markdown: boolean },   // 강조 켜기/끄기
  *   text: { scale, codeScale, weight, lineHeight, letterSpacing, paragraph: number, shadow: boolean },
- *   font: { source: string, family: string, input: boolean, site: boolean },
+ *   font: { id: string | null, input: boolean, site: boolean },
  *   bg:   { imageId: string | null, blur, dim, zoom, uiOpacity: number,
  *           novelShade: boolean, novelShadeStrength: number },
  *   sendShape: boolean                 // 전송 버튼을 테마 모양으로
@@ -8896,7 +8896,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     theme: 'borderless', palette: 0, autoColors: true, colors: null,
     hl: { dialogue: true, thought: true, italic: true, strong: true, code: true, markdown: true },
     text: { scale: 1, codeScale: 1, weight: 400, lineHeight: 1.65, letterSpacing: 0, paragraph: 0.7, shadow: false },
-    font: { source: '', family: '', input: false, site: false },
+    font: { id: null, input: false, site: false },
     bg: { imageId: null, blur: 6, dim: 0.34, zoom: 1, uiOpacity: 0.86, novelShade: false, novelShadeStrength: 0.45 },
     sendShape: false,
   };
@@ -8952,17 +8952,45 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   }
 
   // ───────────────────────── 저장소 ─────────────────────────
-  const data = (() => {
+  function readData() {
     let raw = null;
     try { raw = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { /* 손상된 값은 기본값으로 시작 */ }
-    const presets = Array.isArray(raw?.presets)
-      ? raw.presets.filter(p => p && p.id).map(p => ({ id: String(p.id), name: String(p.name || '프리셋'), settings: normalize(p.settings) }))
+    const fonts = Array.isArray(raw?.fonts)
+      ? raw.fonts.filter(f => typeof f?.id === 'string' && typeof f.name === 'string' && typeof f.source === 'string')
       : [];
-    if (!presets.length) presets.push({ id: uid(), name: '기본', settings: normalize(null) });
-    return { active: presets.some(p => p.id === raw?.active) ? raw.active : presets[0].id, presets };
-  })();
-  const activePreset = () => data.presets.find(p => p.id === data.active);
-  let S = activePreset().settings;
+    const presets = Array.isArray(raw?.presets)
+      ? raw.presets.filter(p => p?.id).map(p => {
+        const name = String(p.name || '프리셋');
+        const settings = normalize(p.settings);
+        const legacy = p.settings?.font;
+        const source = typeof legacy?.source === 'string' ? legacy.source.trim() : '';
+        if (source && !settings.font.id) {
+          const family = typeof legacy.family === 'string' ? legacy.family.trim() : '';
+          let font = fonts.find(f => f.source === source && (f.family || '') === family);
+          if (!font) {
+            font = { id: uid(), name: family || fontFaces(source)[0]?.family || name, source, family };
+            fonts.push(font);
+          }
+          settings.font.id = font.id;
+        }
+        return { id: String(p.id), name, settings };
+      })
+      : [{ id: 'default', name: '기본', settings: normalize(null) }];
+    const ids = new Set(presets.map(p => p.id));
+    const roomPresets = Object.create(null);
+    for (const [room, id] of Object.entries(raw?.roomPresets || {})) {
+      if (ids.has(id)) roomPresets[room] = id;
+    }
+    return { roomPresets, presets, fonts };
+  }
+  let data, S;
+  const activePreset = (room = roomId()) => room ? data.presets.find(p => p.id === data.roomPresets[room]) : undefined;
+
+  function roomCounts() {
+    const counts = new Map();
+    for (const id of Object.values(data.roomPresets)) counts.set(id, (counts.get(id) || 0) + 1);
+    return counts;
+  }
 
   function persist() {
     try {
@@ -9081,7 +9109,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
 
   // 테마 CSS가 html에 기대하는 속성들
   function stateAttrs(s, mode) {
-    const font = !!fontFamilyOf(s);
+    const font = !!fontOf(s);
     return {
       'ui-style': s.theme,
       theme: mode,
@@ -9113,49 +9141,84 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   }
 
   // ───────────────────────── 웹폰트 ─────────────────────────
-  const fontCache = new Map(); // CSS 주소 → 찾은 글꼴 이름 목록
-  const FONT_FILE = /^https?:\/\/\S+\.(woff2?|ttf|otf)(\?\S*)?$/i;
+  const fontCache = new Map(); // CSS 주소 → @font-face 목록
+  const fontDefinitions = new WeakMap();
+  const FONT_FILE = /^https?:\/\/\S+\.(woff2?|ttf|otf)([?#]\S*)?$/i;
+  const FACE_FAMILY = /\bfont-family\s*:\s*(['"]?)([^;'"}]+)\1/i;
   const fontUrlOf = src => {
-    const m = src.match(/@import\s+url\(\s*['"]?([^'")\s]+)/i) || src.match(/^(https?:\/\/\S+)$/i);
-    return m && !FONT_FILE.test(m[1]) ? m[1].replace(/^\/\//, 'https://') : '';
+    const m = src.match(/@import\s+(?:url\(\s*['"]?|['"])([^'")\s]+)/i) || src.match(/^(https?:\/\/\S+)$/i);
+    const url = m?.[1].replace(/^\/\//, 'https://') || '';
+    return /^https?:\/\//i.test(url) && !FONT_FILE.test(url) ? url : '';
   };
-  const familiesIn = css => [...new Set([...String(css).matchAll(/font-family\s*:\s*['"]?([^;'"}]+)/gi)].map(m => m[1].trim()))];
+  const cssString = s => '"' + s.replace(/["\\\n\r\f]/g, c => '\\' + c.codePointAt(0).toString(16) + ' ') + '"';
+  const fontVar = id => '--ctk-font-' + CSS.escape(id);
+  const fontOf = s => data.fonts.find(f => f.id === s?.font.id);
 
-  function fontFamiliesOf(s) {
-    const src = s.font.source.trim();
-    if (!src) return [];
-    if (/@font-?face/i.test(src)) return familiesIn(src);
-    if (FONT_FILE.test(src)) return ['CtkUserFont'];
-    return fontCache.get(fontUrlOf(src)) || [];
+  function fontFaces(css, base) {
+    const faces = [];
+    for (let rule of css.match(/@font-?face\s*\{[^}]*\}/gi) || []) {
+      const family = rule.match(FACE_FAMILY)?.[2].trim();
+      if (!family) continue;
+      rule = rule.replace(/^@fontface/i, '@font-face');
+      if (base) {
+        rule = rule.replace(/\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^\s)]+))\s*\)/gi, (token, a, b, c) => {
+          try { return 'url(' + cssString(new URL(a ?? b ?? c, base).href) + ')'; } catch (_) { return token; }
+        });
+      }
+      faces.push({ family, rule });
+    }
+    return faces;
   }
-  function fontFamilyOf(s) {
-    const list = fontFamiliesOf(s);
-    if (s.font.family && (list.includes(s.font.family) || !list.length)) return s.font.family;
-    return list[0] || '';
+  function fontDefinition(font) {
+    const { source, id, name, family } = font;
+    const previous = fontDefinitions.get(font);
+    const url = previous ? previous.url : /@font-?face\s*\{/i.test(source) ? '' : fontUrlOf(source);
+    const remoteFaces = fontCache.get(url);
+    if (previous && previous.remoteFaces === remoteFaces) return previous;
+
+    const alias = cssString('CtkUserFont-' + id);
+    let stack = alias, css = '';
+    if (FONT_FILE.test(source)) {
+      css = '@font-face{font-family:' + alias + ';src:url(' + cssString(source) + ');font-display:swap}';
+    } else {
+      const faces = remoteFaces || fontFaces(source);
+      const actual = faces.find(f => f.family === family)?.family || faces.find(f => f.family === name)?.family || faces[0]?.family;
+      if (actual) {
+        css = faces.filter(f => f.family === actual).map(f => f.rule.replace(FACE_FAMILY, () => 'font-family:' + alias)).join('\n');
+      } else {
+        stack = cssString(typeof family === 'string' && family ? family : name);
+      }
+    }
+    const definition = { stack, css, url, remoteFaces };
+    fontDefinitions.set(font, definition);
+    return definition;
   }
   function fontStackOf(s) {
-    const f = fontFamilyOf(s);
-    return f ? `"${f.replace(/["\\]/g, '')}"` : '';
+    const font = fontOf(s);
+    return font ? fontDefinition(font).stack : '';
   }
-  function fontFaceCss(s) {
-    const src = s.font.source.trim();
-    if (!src) return '';
-    if (/@font-?face/i.test(src)) return src.replace(/<\/?style[^>]*>/gi, '').replace(/@fontface/gi, '@font-face');
-    if (FONT_FILE.test(src)) return `@font-face{font-family:"CtkUserFont";src:url("${src.replace(/"/g, '')}");font-display:swap}`;
-    const url = fontUrlOf(src);
-    return url ? `@import url("${url.replace(/"/g, '')}");` : '';
-  }
-  function loadFontFamilies(s) {
-    const url = fontUrlOf(s.font.source.trim());
-    if (!url || fontCache.has(url)) return;
-    fontCache.set(url, []);
-    fetch(url).then(r => (r.ok ? r.text() : '')).then(css => {
-      fontCache.set(url, familiesIn(css));
-      applyAll();
-      if (panel) renderPanel();
-    }).catch(() => {
-      // 주소를 못 읽어도 @import는 그대로 쓰이고, 글꼴 이름은 직접 입력할 수 있다.
-    });
+  function syncFonts() {
+    const previews = panel && tab === 'text' && S;
+    const selected = fontOf(S);
+    const fonts = previews ? data.fonts : selected ? [selected] : [];
+    const imports = new Set(), faces = new Set(), vars = [];
+    for (const font of fonts) {
+      const { css, stack, url } = fontDefinition(font);
+      if (css) faces.add(css);
+      if (url && !css && !fontCache.has(url)) {
+        fontCache.set(url, null);
+        fetch(url).then(async r => r.ok ? fontFaces(await r.text(), r.url || url) : [])
+          .catch(() => []).then(rules => {
+            fontCache.set(url, rules);
+            const current = fontOf(S);
+            if ((current && fontDefinition(current).url === url) || (panel && tab === 'text' && S)) applyAll();
+          });
+      }
+      if (url && !css && font === selected && fontCache.get(url)) imports.add('@import url(' + cssString(url) + ');');
+      if (previews) vars.push(fontVar(font.id) + ':' + stack);
+    }
+    const previewCss = vars.length ? '#ctk-panel{' + vars.join(';') + '}' : '';
+    setStyle('ctk-font', [...imports, ...faces, previewCss].join('\n'));
   }
 
   // ───────────────────────── 스타일 적용 ─────────────────────────
@@ -9173,19 +9236,38 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   let appliedTheme = '';
   function applyAll() {
     const html = document.documentElement;
-    const inRoom = isRoomPath();
-    html.classList.toggle('ctk-bg-room', inRoom);
-    html.classList.toggle('ctk-bg-active', inRoom);
-    if (!inRoom) { html.classList.remove('ctk-bg-image-active'); return; }
+    html.classList.toggle('ctk-bg-room', !!S);
+    html.classList.toggle('ctk-bg-active', !!S);
+    syncFonts();
+    if (!S) {
+      bgToken++;
+      html.classList.remove('ctk-bg-image-active');
+      if (appliedTheme) {
+        setStyle('ctk-theme', '');
+        setStyle('ctk-nyang', '');
+        for (const k of Object.keys(stateAttrs(DEFAULTS, MODE))) html.removeAttribute('data-ctk-' + k);
+        for (const k of Object.keys(computeVars(DEFAULTS, MODE))) html.style.removeProperty(k);
+        html.removeAttribute('data-ctk-novel-shade-layout');
+        clearTimeout(settleTimer);
+        settle.clear();
+        pageQuotes.reset();
+        quoteKey = '';
+        redecorateAll();
+        appliedTheme = '';
+      }
+      return;
+    }
 
     if (appliedTheme !== S.theme) {
       setStyle('ctk-theme', themeCss(S.theme));
-      if (appliedTheme) redecorateAll();
+      pageQuotes.reset();
+      quoteKey = '';
+      redecorateAll();
+      if (!appliedTheme) decorateStatic();
+      syncLayout();
       appliedTheme = S.theme;
     }
     setStyle('ctk-nyang', S.theme === 'nyang' ? NYANG_CSS[NYANG_COATS[S.palette] || 'milk'] : '');
-    setStyle('ctk-font', fontFaceCss(S));
-    loadFontFamilies(S);
     setAttrs(html, 'data-ctk-', stateAttrs(S, MODE));
     applyVars(html, S, MODE);
     syncBackground();
@@ -9212,11 +9294,12 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     const html = document.documentElement;
     const root = ensureLayer();
     const id = S.bg.imageId;
-    if (!root || !id) { html.classList.remove('ctk-bg-image-active'); return; }
+    if (!root || !id) { bgToken++; html.classList.remove('ctk-bg-image-active'); return; }
     if (id !== bgUrlId) {
+      html.classList.remove('ctk-bg-image-active');
       const token = ++bgToken;
       const rec = await getImage(id).catch(() => null);
-      if (token !== bgToken) return;
+      if (token !== bgToken || activePreset()?.settings.bg.imageId !== id) return;
       if (bgUrl) URL.revokeObjectURL(bgUrl);
       bgUrl = rec?.blob ? URL.createObjectURL(rec.blob) : '';
       bgUrlId = id;
@@ -9229,8 +9312,8 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   }
 
   // ───────────────────────── 방 판별 ─────────────────────────
-  function isRoomPath(p = location.pathname) {
-    return /^\/(stories\/[^/]+\/episodes|episodes|characters\/[^/]+\/chats|chats)\/[^/?#]+/i.test(p);
+  function roomId(p = location.pathname) {
+    return p.match(/^\/(?:stories\/[^/]+\/(?:episodes|chats)|episodes|characters\/[^/]+\/chats|chats|u\/[^/]+\/c)\/([^/?#]+)/i)?.[1];
   }
 
   // ───────────────────────── 메시지 표시 ─────────────────────────
@@ -9379,7 +9462,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     document.querySelectorAll('[data-ctk-message-role], [data-ctk-role-user-bubble], [data-ctk-imessage-user-bubble]').forEach(el => {
       ['message-role', 'role-user-bubble', 'imessage-user-bubble', 'group-role'].forEach(a => unmark(el, a));
     });
-    document.querySelectorAll('main ' + SEL.group).forEach(decorateGroup);
+    if (S) document.querySelectorAll('main ' + SEL.group).forEach(decorateGroup);
   }
 
   function decorateThemeBubble(bubble, md, kind) {
@@ -9666,11 +9749,14 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     if (location.pathname !== path) {
       path = location.pathname;
       quoteKey = '';
-      document.querySelectorAll('main ' + SEL.group).forEach(g => dirty.add(g));
+      S = activePreset()?.settings;
+      staticDirty = true;
+      if (S && appliedTheme === S.theme) document.querySelectorAll('main ' + SEL.group).forEach(g => dirty.add(g));
       applyAll();
+      if (panel) renderPanel(false);
     }
     if (menuDirty) { menuDirty = false; mountSettingsRow(); }
-    if (!isRoomPath()) { dirty.clear(); return; }
+    if (!S) { dirty.clear(); return; }
     ensureLayer();
     if (staticDirty) { staticDirty = false; decorateStatic(); }
     if (!dirty.size) return;
@@ -9722,7 +9808,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   }
 
   // ───────────────────────── 설정창 ─────────────────────────
-  let panel = null, panelRO = null, pop = null, tab = 'theme', themeCat = 'all';
+  let panel = null, panelRO = null, pop = null, popAnchor = null, tab = 'theme', themeCat = 'all';
   let gallery = null, galleryFailed = false; // 설정창이 열려 있는 동안의 이미지 목록 [{ id, url }]
   const SEND_SHAPE_THEMES = new Set(CSS_PARTS.filter(([k, c]) => k && c.includes('send-shape')).flatMap(([k]) => k.split(',')));
 
@@ -9736,22 +9822,35 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
 
   // 지금 프리셋의 설정을 바꾸고 저장·적용한다. render:false면 설정창은 호출한 쪽이 직접 고친다.
   function update(mutator, opts = {}) {
+    const preset = activePreset();
+    if (!preset) return;
     mutator(S);
-    activePreset().settings = S = normalize(S);
+    preset.settings = S = normalize(S);
     persist();
     applyAll();
     if (panel && opts.render !== false) renderPanel();
   }
   function switchPreset(id) {
-    data.active = id;
-    S = activePreset().settings;
-    persist();
+    const room = roomId();
+    if (room && (data.roomPresets[room] || '') !== id) {
+      if (id) data.roomPresets[room] = id;
+      else delete data.roomPresets[room];
+      persist();
+      refreshPreset();
+    } else {
+      closePresetList();
+    }
+    panel?.querySelector('.ctk-preset summary').focus();
+  }
+  function refreshPreset() {
+    S = activePreset()?.settings;
     applyAll();
     if (panel) renderPanel();
   }
 
   function openPanel() {
     if (panel) return;
+    if (path !== location.pathname) flush();
     panel = document.createElement('div');
     panel.id = 'ctk-panel';
     panel.setAttribute('role', 'dialog');
@@ -9762,6 +9861,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     panel.addEventListener('change', onPanelChange);
     panel.addEventListener('keydown', onPanelKey);
     document.addEventListener('keydown', onKey, true);
+    document.addEventListener('pointerdown', onPresetOutside);
     panelRO = new ResizeObserver(fitMinis);
     panelRO.observe(panel);
     renderPanel(false);
@@ -9774,16 +9874,32 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     gallery = null;
     panel.remove();
     panel = null;
+    syncFonts();
     setStyle('ctk-preview', '');
     setStyle('ctk-preview-nyang', '');
     pvCoat = '';
     previewQuotes?.reset();
     document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('pointerdown', onPresetOutside);
   }
   function onKey(e) {
     if (e.key !== 'Escape') return;
     e.stopPropagation();
-    if (pop) closePop(); else closePanel();
+    if (pop) closePop(true);
+    else if (!closePresetList(true)) closePanel();
+  }
+  function closePresetList(focus = false) {
+    const list = panel?.querySelector('.ctk-preset[open]');
+    if (!list) return false;
+    list.open = false;
+    if (focus) list.querySelector('summary').focus();
+    return true;
+  }
+  function onPresetOutside(e) {
+    const list = panel.querySelector('.ctk-preset[open]');
+    if (!list || list.contains(e.target) || pop?.contains(e.target)) return;
+    closePresetList();
+    closePop();
   }
 
   const svg = (d, w = 18) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -9795,6 +9911,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     trash: svg('<path d="M4 7h16M9 7V5h6v2M6.5 7l1 12h9l1-12"/>'),
     pencil: svg('<path d="M14.5 5.5l4 4L9 19H5v-4z"/>'),
     check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 12),
+    chevron: svg('<path d="m6 9 6 6 6-6"/>', 14),
   };
   const dots = sw => `<span class="ctk-dots">${sw.map(c => `<i style="background:${esc(c)}"></i>`).join('')}</span>`;
 
@@ -9853,6 +9970,24 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     });
   }
 
+  function presetList() {
+    const selected = activePreset();
+    const counts = roomCounts();
+    const count = p => `<span class="ctk-preset-count" title="사용 중인 채팅방">${counts.get(p.id) || 0}</span>`;
+    const disabled = roomId() ? '' : 'disabled';
+    return `<details class="ctk-preset">
+      <summary aria-label="프리셋: ${esc(selected?.name || '미설정')}"><span class="ctk-preset-name">${esc(selected?.name || '미설정')}</span>${selected ? count(selected) : ''}${icon.chevron}</summary>
+      <div class="ctk-preset-list" role="group" aria-label="프리셋 목록">
+        <div class="ctk-preset-row"><button type="button" class="ctk-preset-pick" data-act="preset-pick" data-id="" aria-pressed="${!selected}" ${disabled}>미설정</button></div>
+        ${data.presets.map(p => `<div class="ctk-preset-row">
+          <button type="button" class="ctk-preset-pick" data-act="preset-pick" data-id="${esc(p.id)}" title="${esc(p.name)}" aria-label="${esc(p.name)}, 채팅방 ${counts.get(p.id) || 0}개에서 사용 중" aria-pressed="${p === selected}" ${disabled}><span class="ctk-preset-name">${esc(p.name)}</span>${count(p)}</button>
+          <button type="button" class="ctk-icon" data-act="preset-rename" data-id="${esc(p.id)}" title="이름 바꾸기" aria-label="${esc(p.name)} 이름 바꾸기">${icon.pencil}</button>
+          <button type="button" class="ctk-icon" data-act="preset-delete" data-id="${esc(p.id)}" title="프리셋 삭제" aria-label="${esc(p.name)} 삭제">${icon.trash}</button>
+        </div>`).join('')}
+      </div>
+    </details>`;
+  }
+
   function renderPanel(keepScroll = true) {
     if (!panel) return;
     closePop();
@@ -9863,16 +9998,16 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     panel.innerHTML = `
       <div class="ctk-head"><h2>배경·테마 설정</h2><button type="button" class="ctk-icon" data-act="close" aria-label="닫기">${icon.close}</button></div>
       <div class="ctk-presetbar">
-        <select class="ctk-select" data-preset-select aria-label="프리셋">${data.presets.map(p => `<option value="${p.id}" ${p.id === data.active ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+        ${presetList()}
         <button type="button" class="ctk-icon" data-act="preset-add" title="새 프리셋" aria-label="새 프리셋">${icon.plus}</button>
-        <button type="button" class="ctk-icon" data-act="preset-rename" title="이름 바꾸기" aria-label="프리셋 이름 바꾸기">${icon.pencil}</button>
-        <button type="button" class="ctk-icon" data-act="preset-delete" title="프리셋 삭제" aria-label="프리셋 삭제" ${data.presets.length < 2 ? 'disabled' : ''}>${icon.trash}</button>
       </div>
-      <nav class="ctk-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" aria-selected="${tab === k}" data-tab="${k}">${l}</button>`).join('')}</nav>
-      <div class="ctk-body">${({ theme: themeTab, bg: bgTab, text: textTab, color: colorTab })[tab]()}</div>`;
+      ${S ? `<nav class="ctk-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" aria-selected="${tab === k}" data-tab="${k}">${l}</button>`).join('')}</nav>` : ''}
+      <div class="ctk-body">${S ? ({ theme: themeTab, bg: bgTab, text: textTab, color: colorTab })[tab]()
+        : `<p class="ctk-empty">${roomId() ? '프리셋을 선택하면 테마를 설정할 수 있습니다.' : '채팅방에서 프리셋을 선택할 수 있습니다.'}</p>`}</div>`;
     panel.querySelector('.ctk-body').scrollTop = scroll;
+    syncFonts();
     mountMinis();
-    if (tab === 'bg' && !gallery && !galleryFailed) loadGallery();
+    if (S && tab === 'bg' && !gallery && !galleryFailed) loadGallery();
   }
 
   // ── 테마
@@ -9906,11 +10041,14 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
 
   // ── 배경
   async function loadGallery() {
+    const owner = panel;
+    gallery = [];
     try {
       const recs = await listImages();
-      if (!panel) return;
+      if (owner !== panel) return;
       gallery = recs.map(r => ({ id: r.id, url: URL.createObjectURL(r.blob) }));
     } catch (_) {
+      if (owner !== panel) return;
       galleryFailed = true;
     }
     if (panel && tab === 'bg') renderPanel();
@@ -9938,20 +10076,28 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   }
 
   // ── 글자
+  function fontGalleryHtml() {
+    const add = `<button type="button" class="ctk-tile add" data-act="font-add" title="웹폰트 추가" aria-label="웹폰트 추가">${icon.plus}</button>`;
+    const tiles = data.fonts.map(f => {
+      const on = f.id === S.font.id;
+      return `<div class="ctk-tile" ${on ? 'data-on' : ''}>
+        <button type="button" class="ctk-tile-pick ctk-font-pick" data-act="font-pick" data-id="${esc(f.id)}" title="${esc(f.name)}" aria-label="${esc(f.name)} ${on ? '적용 해제' : '적용'}" aria-pressed="${on}">
+          <span class="ctk-font-sample" style="font-family:var(${esc(fontVar(f.id))},inherit)" aria-hidden="true">가 Aa</span>
+          <span class="ctk-font-name">${esc(f.name)}</span>
+        </button>
+        ${on ? `<span class="ctk-tile-on">${icon.check}</span>` : ''}
+        <button type="button" class="ctk-tile-x" data-act="font-delete" data-id="${esc(f.id)}" title="웹폰트 삭제" aria-label="${esc(f.name)} 삭제">${icon.x}</button>
+      </div>`;
+    }).join('');
+    return `<div class="ctk-gallery">${add}${tiles}</div>`;
+  }
   function textTab() {
-    const families = fontFamiliesOf(S);
-    const family = fontFamilyOf(S);
-    const familyCtl = families.length > 1
-      ? `<select class="ctk-select" data-font-family aria-label="글꼴 이름">${families.map(f => `<option ${f === family ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>`
-      : `<input class="ctk-input" data-font-family value="${esc(S.font.family || family)}" placeholder="자동" aria-label="글꼴 이름">`;
     const scope = S.font.site ? 'site' : S.font.input ? 'input' : 'chat';
     const scopes = [['chat', '채팅'], ['input', '채팅·입력창'], ['site', '사이트 전체']];
     return section('글자 모양', sliders(SLIDERS.text) + row('글자 그림자', toggle('text.shadow', S.text.shadow, '글자 그림자')),
       [...SLIDERS.text.map(s => s[0]), 'text.shadow'])
-      + section('웹폰트', `<div class="ctk-field"><span>@font-face, 폰트 파일 주소 또는 CSS 주소</span>
-          <textarea class="ctk-input" rows="2" spellcheck="false" data-font-source aria-label="웹폰트" placeholder="@import url(...) 또는 https://.../font.woff2">${esc(S.font.source)}</textarea></div>
-          <div class="ctk-field"><span>글꼴 이름</span>${familyCtl}</div>
-          <div class="ctk-field"><span>적용 범위</span><div class="ctk-seg" role="radiogroup" aria-label="웹폰트 적용 범위">${scopes.map(([k, l]) => `<button type="button" role="radio" aria-checked="${scope === k}" data-font-scope="${k}" ${family ? '' : 'disabled'}>${l}</button>`).join('')}</div></div>`,
+      + section('웹폰트', fontGalleryHtml()
+        + `<div class="ctk-field"><span>적용 범위</span><div class="ctk-seg" role="radiogroup" aria-label="웹폰트 적용 범위">${scopes.map(([k, l]) => `<button type="button" role="radio" aria-checked="${scope === k}" data-font-scope="${k}" ${fontOf(S) ? '' : 'disabled'}>${l}</button>`).join('')}</div></div>`,
         ['font']);
   }
 
@@ -10062,16 +10208,23 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   // ───────────────────────── 팝오버 (이름 입력·삭제 확인) ─────────────────────────
   function openPop(anchor, kind, id) {
     closePop();
-    const cur = activePreset();
+    const preset = data.presets.find(p => p.id === id);
+    const font = data.fonts.find(f => f.id === id);
+    const rooms = kind === 'delete' ? roomCounts().get(id) || 0 : 0;
     const imgUsers = kind === 'image-delete' ? data.presets.filter(p => p.settings.bg.imageId === id).length : 0;
+    const fontUsers = kind === 'font-delete' ? data.presets.filter(p => p.settings.font.id === id).length : 0;
     const body = {
-      add: `<label><span>새 프리셋 (지금 설정 복사)</span><input class="ctk-input" data-pop-name maxlength="40" value="${esc(`프리셋 ${data.presets.length + 1}`)}"></label>`,
-      rename: `<label><span>프리셋 이름</span><input class="ctk-input" data-pop-name maxlength="40" value="${esc(cur.name)}"></label>`,
-      delete: `<p>'${esc(cur.name)}' 프리셋을 삭제할까요?</p>`,
+      add: `<label><span>${S ? '새 프리셋 (지금 설정 복사)' : '새 프리셋 이름'}</span><input class="ctk-input" data-pop-name maxlength="40" value="${esc(`프리셋 ${data.presets.length + 1}`)}"></label>`,
+      rename: `<label><span>프리셋 이름</span><input class="ctk-input" data-pop-name maxlength="40" value="${esc(preset?.name)}"></label>`,
+      delete: `<p>'${esc(preset?.name)}' 프리셋을 삭제할까요? 채팅방 ${rooms}개에서 사용 중입니다.${rooms ? ' 삭제하면 해당 채팅방은 미설정이 됩니다.' : ''}</p>`,
       'image-delete': `<p>이미지를 삭제할까요?${imgUsers ? ` 프리셋 ${imgUsers}개에서 배경으로 쓰는 중입니다.` : ''}</p>`,
+      'font-add': `<label><span>폰트명</span><input class="ctk-input" data-pop-name maxlength="40"></label>
+          <label><span>웹폰트 (@font-face, CSS 또는 폰트 파일 주소)</span><textarea class="ctk-input" rows="3" spellcheck="false" data-pop-source></textarea></label>`,
+      'font-delete': `<p>'${esc(font?.name)}' 웹폰트를 삭제할까요?${fontUsers ? ` 프리셋 ${fontUsers}개에서 사용 중입니다. 삭제하면 해당 프리셋에서 적용이 해제됩니다.` : ''}</p>`,
     }[kind];
-    const ok = { add: '만들기', rename: '변경', delete: '삭제', 'image-delete': '삭제' }[kind];
+    const ok = { add: '만들기', rename: '변경', 'font-add': '등록' }[kind] || '삭제';
     pop = document.createElement('div');
+    popAnchor = anchor;
     pop.className = 'ctk-pop';
     pop.setAttribute('role', 'dialog');
     pop.dataset.kind = kind;
@@ -10085,37 +10238,62 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     pop.style.left = clamp(ar.right - pr.left - w, 8, pr.width - w - 8) + 'px';
     pop.style.top = top + 'px';
     const input = pop.querySelector('input');
-    if (input) { input.focus(); input.select(); } else pop.querySelector('[data-act="pop-ok"]').focus();
+    if (input) { input.focus(); input.select(); } else pop.querySelector('[data-act="pop-cancel"]').focus();
   }
-  function closePop() { pop?.remove(); pop = null; }
+  function closePop(focus = false) {
+    pop?.remove();
+    pop = null;
+    if (focus) popAnchor?.focus();
+    popAnchor = null;
+  }
   function popOk() {
     const { kind, id } = pop.dataset;
     const name = pop.querySelector('[data-pop-name]')?.value.trim();
+    const source = pop.querySelector('[data-pop-source]')?.value.trim();
+    if (kind === 'rename' && !name) { closePop(true); return; }
+    if (kind === 'font-add') {
+      if (!name) { toast('폰트명을 입력해 주세요.'); pop.querySelector('[data-pop-name]').focus(); return; }
+      if (!(fontFaces(source).length || FONT_FILE.test(source) || fontUrlOf(source))) {
+        toast('웹폰트 CSS나 HTTP(S) 주소를 입력해 주세요.');
+        pop.querySelector('[data-pop-source]').focus();
+        return;
+      }
+    }
     closePop();
     if (kind === 'add') {
-      const p = { id: uid(), name: name || `프리셋 ${data.presets.length + 1}`, settings: clone(S) };
+      const p = { id: uid(), name: name || `프리셋 ${data.presets.length + 1}`, settings: clone(S || DEFAULTS) };
       data.presets.push(p);
-      switchPreset(p.id);
+      if (roomId()) { switchPreset(p.id); return; }
     } else if (kind === 'rename') {
-      if (name) activePreset().name = name;
-      persist();
-      renderPanel();
-    } else if (kind === 'delete' && data.presets.length > 1) {
-      data.presets = data.presets.filter(p => p.id !== data.active);
-      switchPreset(data.presets[0].id);
+      data.presets.find(p => p.id === id).name = name;
+    } else if (kind === 'delete') {
+      data.presets = data.presets.filter(p => p.id !== id);
+      for (const [room, presetId] of Object.entries(data.roomPresets)) {
+        if (presetId === id) delete data.roomPresets[room];
+      }
+    } else if (kind === 'font-add') {
+      data.fonts.push({ id: uid(), name, source });
+    } else if (kind === 'font-delete') {
+      data.fonts = data.fonts.filter(f => f.id !== id);
+      data.presets.forEach(p => { if (p.settings.font.id === id) p.settings.font.id = null; });
     } else if (kind === 'image-delete') {
       data.presets.forEach(p => { if (p.settings.bg.imageId === id) p.settings.bg.imageId = null; });
-      persist();
-      applyAll();
       const g = gallery?.find(x => x.id === id);
       if (g) { URL.revokeObjectURL(g.url); gallery.splice(gallery.indexOf(g), 1); }
-      renderPanel();
       deleteImage(id).catch(() => toast('이미지를 저장소에서 지우지 못했습니다. 브라우저가 IndexedDB 저장소를 막고 있는지 확인해 주세요.'));
+    }
+    persist();
+    refreshPreset();
+    if (kind === 'rename' || kind === 'delete') {
+      const list = panel.querySelector('.ctk-preset');
+      list.open = true;
+      list.querySelector('summary').focus();
     }
   }
 
   // ───────────────────────── 설정창 이벤트 ─────────────────────────
   function onPanelClick(e) {
+    if (path !== location.pathname) { flush(); return; }
     if (pop && !pop.contains(e.target)) closePop();
     const b = e.target.closest('button');
     if (!b || !panel.contains(b) || b.disabled) return;
@@ -10161,20 +10339,29 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     switch (d.act) {
       case 'close': closePanel(); break;
       case 'preset-add': openPop(b, 'add'); break;
-      case 'preset-rename': openPop(b, 'rename'); break;
-      case 'preset-delete': openPop(b, 'delete'); break;
+      case 'preset-pick': switchPreset(d.id); break;
+      case 'preset-rename': openPop(b, 'rename', d.id); break;
+      case 'preset-delete': openPop(b, 'delete', d.id); break;
       case 'image-add': panel.querySelector('[data-file]').click(); break;
       case 'image-pick': update(s => { s.bg.imageId = s.bg.imageId === d.id ? null : d.id; }); break;
       case 'image-delete': openPop(b, 'image-delete', d.id); break;
+      case 'font-add': openPop(b, 'font-add'); break;
+      case 'font-pick': update(s => { s.font.id = s.font.id === d.id ? null : d.id; }); break;
+      case 'font-delete': openPop(b, 'font-delete', d.id); break;
       case 'pop-ok': popOk(); break;
-      case 'pop-cancel': closePop(); break;
+      case 'pop-cancel': closePop(true); break;
     }
   }
   function onPanelKey(e) {
-    if (e.key === 'Enter' && e.target.matches('[data-pop-name]')) { e.preventDefault(); popOk(); }
+    if (e.key !== 'Enter' || e.isComposing || !e.target.matches('[data-pop-name]')) return;
+    e.preventDefault();
+    if (path !== location.pathname) { flush(); return; }
+    const source = pop.querySelector('[data-pop-source]');
+    if (source) source.focus(); else popOk();
   }
   const SLIDERS_FLAT = Object.fromEntries(Object.values(SLIDERS).flat().map(s => [s[0], s]));
   function onPanelInput(e) {
+    if (!S || path !== location.pathname) return;
     const el = e.target;
     if (el.dataset.range) {
       setPath(S, el.dataset.range, Number(el.value));
@@ -10186,18 +10373,17 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     }
   }
   function onPanelChange(e) {
+    if (!S || path !== location.pathname) return;
     const el = e.target;
-    if ('presetSelect' in el.dataset) { switchPreset(el.value); return; }
     if (el.dataset.range) { persist(); syncResets(); return; }
     if (el.dataset.color) { update(() => {}); return; }
-    if ('fontSource' in el.dataset) { update(s => { s.font.source = el.value; s.font.family = ''; }); return; }
-    if ('fontFamily' in el.dataset) { update(s => { s.font.family = el.value.trim(); }); return; }
     if ('file' in el.dataset) { addImage(el.files?.[0]); el.value = ''; }
   }
   async function addImage(file) {
     if (!file) return;
     if (!file.type.startsWith('image/')) { toast('이미지 파일만 추가할 수 있습니다.'); return; }
     const id = uid();
+    const room = roomId(), presetId = activePreset()?.id;
     try {
       await putImage({ id, blob: file });
     } catch (e) {
@@ -10207,7 +10393,12 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
       return;
     }
     gallery?.push({ id, url: URL.createObjectURL(file) });
-    update(s => { s.bg.imageId = id; });
+    const preset = activePreset(room);
+    if (preset && preset.id === presetId) {
+      preset.settings.bg.imageId = id;
+      persist();
+    }
+    refreshPreset();
   }
 
   // ───────────────────────── 고정 CSS ─────────────────────────
@@ -10222,7 +10413,7 @@ html.ctk-bg-image-active #ctk-bg{opacity:1}
 #ctk-bg img:not([src]){display:none}
 #ctk-bg>div{position:absolute;inset:0;background:rgba(0,0,0,var(--ctk-dim-overlay))}
 html[data-ctk-theme="light"] #ctk-bg>div{background:rgba(255,255,255,var(--ctk-dim-overlay))}
-[data-ctk-qhost],[data-ctkp-qhost]{position:relative;isolation:isolate}
+html.ctk-bg-active [data-ctk-qhost],[data-ctkp-qhost]{position:relative;isolation:isolate}
 .ctk-qlayer{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:visible}
 .ctk-qlayer>i{position:absolute;display:block;box-sizing:content-box;padding:.04em .16em!important;margin:-.04em -.16em!important;-webkit-box-decoration-break:slice;box-decoration-break:slice}
 .ctk-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;max-width:min(92vw,420px);padding:10px 14px;border-radius:10px;background:#1e1f24;color:#f2f2f5;font:13px/1.45 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.3)}
@@ -10236,21 +10427,32 @@ html[data-ctk-theme="light"] #ctk-bg>div{background:rgba(255,255,255,var(--ctk-d
   font:13px/1.45 system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Noto Sans KR",sans-serif;text-align:left;overflow:hidden}
 #ctk-panel[data-mode="light"]{--bg:#fbfbfc;--bg2:#efeff2;--bg3:#e3e3e8;--line:rgba(20,20,30,.1);--ink:#1b1b20;--ink2:#64656d;--track:rgba(20,20,30,.2);--danger:#d93036;box-shadow:0 20px 50px rgba(30,30,50,.18)}
 :where(#ctk-panel) *{box-sizing:border-box}
-:where(#ctk-panel) :is(button,input,select,textarea){font:inherit;color:inherit}
+:where(#ctk-panel) :is(button,input,textarea){font:inherit;color:inherit}
 :where(#ctk-panel) :is(h2,h3,h4,p){margin:0;padding:0}
 :where(#ctk-panel) button{cursor:pointer;background:none;border:0;padding:0}
 :where(#ctk-panel) button:disabled{cursor:default}
-#ctk-panel :is(button,input,select,textarea):focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+#ctk-panel :is(button,input,summary,textarea):focus-visible{outline:2px solid var(--ink);outline-offset:1px}
 .ctk-head{display:flex;align-items:center;justify-content:space-between;padding:10px 10px 6px 16px}
 .ctk-head h2{font-size:15px;font-weight:700}
 .ctk-icon{flex:none;width:34px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--ink2)}
 .ctk-icon.xs{width:26px;height:26px;border-radius:6px}
 .ctk-icon:not(:disabled):hover{background:var(--bg3);color:var(--ink)}
 .ctk-icon:disabled{opacity:.3}
-.ctk-presetbar{display:flex;align-items:center;gap:2px;padding:0 10px 8px 12px}
-.ctk-select{appearance:none;-webkit-appearance:none;min-width:0;height:34px;padding:0 30px 0 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;font-weight:600;cursor:pointer}
-.ctk-presetbar .ctk-select{flex:1;margin-right:4px}
-.ctk-select option{background:var(--bg);color:var(--ink)}
+.ctk-presetbar{display:flex;align-items:center;gap:6px;padding:0 10px 8px 12px}
+.ctk-preset{position:relative;flex:1;min-width:0}
+.ctk-preset summary,.ctk-preset-row .ctk-preset-pick{display:flex;align-items:center;gap:8px;min-width:0;padding:0 10px;border-radius:8px;text-align:left;font-weight:600}
+.ctk-preset summary{height:34px;border:1px solid var(--line);background:var(--bg2);cursor:pointer;list-style:none}
+.ctk-preset summary::-webkit-details-marker{display:none}
+.ctk-preset summary svg{flex:none;color:var(--ink2)}
+.ctk-preset[open] summary svg{transform:rotate(180deg)}
+.ctk-preset-list{position:absolute;z-index:5;top:calc(100% + 4px);inset-inline:0;max-height:min(280px,42vh);overflow-y:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--bg);box-shadow:0 12px 24px rgba(0,0,0,.28)}
+.ctk-preset-row{display:flex;align-items:center;gap:2px;padding:1px}
+.ctk-preset-row .ctk-preset-pick{flex:1;min-height:34px}
+.ctk-preset-pick[aria-pressed="true"],.ctk-preset-pick:not(:disabled):hover{background:var(--bg3)}
+.ctk-preset-pick:disabled{opacity:.5}
+.ctk-preset-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctk-preset-count{flex:none;color:var(--ink2);font-size:12px;font-variant-numeric:tabular-nums}
+.ctk-empty{padding:4px;color:var(--ink2)}
 .ctk-tabs{display:flex;gap:2px;margin:0 12px;padding:3px;border-radius:10px;background:var(--bg2)}
 .ctk-tabs button{flex:1;height:32px;border-radius:8px;font-weight:600;color:var(--ink2)}
 .ctk-tabs button[aria-selected="true"]{background:var(--bg3);color:var(--ink)}
@@ -10290,7 +10492,6 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
 .ctk-field{margin:2px 0 10px}
 .ctk-field:last-child{margin-bottom:0}
 .ctk-field>span{display:block;margin-bottom:5px;font-size:12px;color:var(--ink2)}
-.ctk-field .ctk-select{width:100%}
 .ctk-seg{display:flex;padding:3px;gap:2px;border-radius:9px;background:var(--bg2)}
 .ctk-seg button{flex:1;height:28px;border-radius:7px;font-size:12px;font-weight:600;color:var(--ink2)}
 .ctk-seg button[aria-checked="true"]{background:var(--bg3);color:var(--ink)}
@@ -10307,6 +10508,11 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
 .ctk-tile-on{position:absolute;left:5px;bottom:5px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--ink);color:var(--bg);pointer-events:none}
 .ctk-tile-x{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:rgba(0,0,0,.55);color:#fff}
 .ctk-tile-x:hover{background:var(--danger)}
+.ctk-font-pick{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:20px 5px 5px}
+.ctk-font-pick+.ctk-tile-on{top:5px;bottom:auto}
+.ctk-font-sample{font-size:clamp(14px,5vw,23px);line-height:1.2;white-space:nowrap}
+.ctk-font-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--ink2)}
+.ctk-gallery+.ctk-field{margin-top:10px}
 .ctk-colors{display:flex;gap:18px;padding:4px 0 2px}
 .ctk-cp{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--ink2);cursor:pointer}
 .ctk-cp input{width:28px;height:28px;padding:0;border:1px solid var(--line);border-radius:7px;background:none;cursor:pointer}
@@ -10355,6 +10561,8 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
 .ctk-card[aria-checked="true"]{box-shadow:inset 0 0 0 2px var(--ink)}
 .ctk-card b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ctk-pop{position:absolute;z-index:10;width:min(270px,calc(100% - 16px));padding:12px;border-radius:12px;background:var(--bg);border:1px solid var(--line);box-shadow:0 14px 36px rgba(0,0,0,.4)}
+.ctk-pop label{display:block}
+.ctk-pop label+label{margin-top:8px}
 .ctk-pop label>span{display:block;margin-bottom:6px;font-size:12px;font-weight:600;color:var(--ink2)}
 .ctk-pop p{font-size:13px}
 .ctk-pop-acts{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
@@ -10367,6 +10575,7 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
 
   // ───────────────────────── 시작 ─────────────────────────
   function start() {
+    data = readData();
     setStyle('ctk-base', BASE_CSS + PANEL_CSS);
     MODE = detectMode();
     // 크랙의 다크/라이트 전환은 html·body 속성 변화로만 나타난다.
@@ -10383,6 +10592,14 @@ textarea.ctk-input{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monos
     }).observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
 
     new MutationObserver(onMutations).observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('popstate', () => {
+      if (location.pathname !== path) flush();
+    });
+    window.addEventListener('storage', e => {
+      if (e.storageArea !== localStorage || (e.key !== KEY && e.key !== null)) return;
+      data = readData();
+      refreshPreset();
+    });
     flush();
   }
   start();
