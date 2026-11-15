@@ -8884,7 +8884,13 @@ html.ctk-bg-active[data-ctk-send-shape="on"][data-ctk-ui-style="scrapbook"] [dat
     ["grimoire", `html.ctk-bg-active[data-ctk-send-shape="on"][data-ctk-ui-style="grimoire"] [data-ctk-input-box] :is(.justify-between>div:last-child>button:last-of-type,.justify-between>button:last-child):not([aria-haspopup]){--ctk-send-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 32'%3E%3Cg transform='translate(17 16) scale(0.96) translate(-17 -16)'%3E%3Cdefs%3E%3Cmask id='m' maskUnits='userSpaceOnUse' x='0' y='0' width='34' height='32'%3E%3Crect width='34' height='32' fill='%23fff'/%3E%3Ccircle cx='17' cy='16' r='10.2' fill='none' stroke='%23000' stroke-width='1.1'/%3E%3C/mask%3E%3C/defs%3E%3Cpath mask='url(%23m)' d='M30.8 16 L31 17.2 L30.9 18.4 L30.4 19.6 L29.6 20.6 L28.7 21.4 L27.8 22.2 L27 23 L26.4 23.9 L25.9 24.9 L25.3 25.9 L24.7 26.9 L23.8 27.8 L22.7 28.3 L21.6 28.5 L20.4 28.6 L19.2 28.5 L18.1 28.6 L17 28.8 L15.9 29.1 L14.6 29.4 L13.4 29.5 L12.1 29.4 L11 28.9 L10 28.1 L9.3 27.1 L8.6 26 L8.1 24.9 L7.4 24 L6.7 23.2 L5.8 22.5 L5 21.6 L4.3 20.6 L3.9 19.5 L3.9 18.3 L4.1 17.1 L4.4 16 L4.7 14.9 L4.9 13.9 L4.9 12.8 L4.8 11.6 L4.8 10.3 L4.9 9 L5.4 7.9 L6.2 6.9 L7.2 6.2 L8.4 5.7 L9.5 5.3 L10.6 4.9 L11.6 4.4 L12.5 3.7 L13.5 3.1 L14.6 2.5 L15.8 2.3 L17 2.4 L18.2 2.8 L19.2 3.4 L20.2 4 L21.2 4.6 L22.1 5 L23.2 5.2 L24.4 5.4 L25.6 5.7 L26.7 6.3 L27.6 7.1 L28.3 8.1 L28.7 9.3 L28.9 10.4 L29.1 11.6 L29.4 12.7 L29.9 13.7 L30.4 14.8Z'/%3E%3Ccircle cx='29.6' cy='28.4' r='1.6'/%3E%3C/g%3E%3C/svg%3E");width:34px!important;height:32px!important;min-width:34px!important;padding:0px 0px 0px 0px!important;border:0!important;border-radius:0!important;box-shadow:none!important;-webkit-mask:var(--ctk-send-mask) center/contain no-repeat!important;mask:var(--ctk-send-mask) center/contain no-repeat!important;}
 html.ctk-bg-active[data-ctk-send-shape="on"][data-ctk-ui-style="grimoire"] [data-ctk-input-box] :is(.justify-between>div:last-child>button:last-of-type,.justify-between>button:last-child):not([aria-haspopup]) svg{width:13.7px!important;height:13.7px!important;}`],
     ["botanical", `html.ctk-bg-active[data-ctk-send-shape="on"][data-ctk-ui-style="botanical"] [data-ctk-input-box] :is(.justify-between>div:last-child>button:last-of-type,.justify-between>button:last-child):not([aria-haspopup]){--ctk-send-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 32'%3E%3Cg transform='translate(17 16) scale(0.95) translate(-17 -16)'%3E%3Cdefs%3E%3Cmask id='l' maskUnits='userSpaceOnUse' x='0' y='0' width='34' height='32'%3E%3Crect width='34' height='32' fill='%23fff'/%3E%3Cpath d='M7 25.2L11.6 20.6' stroke='%23000' stroke-width='.95' stroke-linecap='round'/%3E%3C/mask%3E%3C/defs%3E%3Cpath mask='url(%23l)' d='M4.6 27.6C3.4 14.6 12.8 3.2 31.4 2.2C30.6 19.6 20.4 29.2 4.6 27.6Z'/%3E%3Cpath d='M5.8 26.4L2 30.4' stroke='%23000' stroke-width='1.8' stroke-linecap='round'/%3E%3C/g%3E%3C/svg%3E");width:34px!important;height:32px!important;min-width:34px!important;padding:0px 0px 1.9px 1.9px!important;border:0!important;border-radius:0!important;box-shadow:none!important;-webkit-mask:var(--ctk-send-mask) center/contain no-repeat!important;mask:var(--ctk-send-mask) center/contain no-repeat!important;}
-html.ctk-bg-active[data-ctk-send-shape="on"][data-ctk-ui-style="botanical"] [data-ctk-input-box] :is(.justify-between>div:last-child>button:last-of-type,.justify-between>button:last-child):not([aria-haspopup]) svg{width:13.6px!important;height:13.6px!important;}`]
+html.ctk-bg-active[data-ctk-send-shape="on"][data-ctk-ui-style="botanical"] [data-ctk-input-box] :is(.justify-between>div:last-child>button:last-of-type,.justify-between>button:last-child):not([aria-haspopup]) svg{width:13.6px!important;height:13.6px!important;}`],
+    // 모델 선택 팝업(Radix, position:fixed)은 입력창 안에 렌더링된다. 입력창의 backdrop-filter 등이 팝업의 기준 박스를
+    // 입력창으로 바꾸면 바깥 스크롤 래퍼에 잘리므로, 팝업이 열린 동안 래퍼의 잘림만 풀고 스크롤바 폭은 패딩으로 메운다.
+    ["", `html.ctk-bg-active [data-ctk-input-scroll]:has([data-ctk-input-box] [data-radix-popper-content-wrapper]){
+        overflow:visible!important;
+        padding-right:var(--ctk-input-sb,0px)!important;
+      }`]
   ];
 
   // ─── NYANG 품종별 그림 (생성됨) ───
@@ -9451,6 +9457,13 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
     for (const input of document.querySelectorAll('main ' + SEL.input)) {
       mark(input.closest('div[class*="rounded-lg"][class*="border"]'), 'input-box');
       mark(input.closest('div[class*="bg-bg_screen"]') || input.closest('div[class*="pointer-events-auto"]'), 'input-host');
+      // 모델 선택 팝업을 자르는 입력창 스크롤 래퍼. 팝업이 닫힌 상태에서 스크롤바 폭을 재 둔다.
+      const scroll = input.closest('div[class*="overflow-y-scroll"][class*="bottom-0"]');
+      mark(scroll, 'input-scroll');
+      if (scroll && !scroll.querySelector('[data-radix-popper-content-wrapper]')) {
+        const sb = (scroll.offsetWidth - scroll.clientWidth) + 'px';
+        if (scroll.style.getPropertyValue('--ctk-input-sb') !== sb) scroll.style.setProperty('--ctk-input-sb', sb);
+      }
     }
     for (const md of document.querySelectorAll('main button > ' + SEL.markdown)) {
       const btn = md.parentElement;
