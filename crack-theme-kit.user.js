@@ -10514,8 +10514,8 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   // ───────────────────────── 고정 CSS ─────────────────────────
   const BASE_CSS = `
 html.ctk-bg-active main[data-ctk-host]{isolation:isolate}
-html.ctk-bg-active main[data-ctk-host]>div:not(#ctk-bg),
-html.ctk-bg-active main[data-ctk-host]>div:not(#ctk-bg)>div:not([role="dialog"]):not([class~="bg-background"]):not([class~="bg-sidebar"]){background-color:transparent!important;background-image:none!important}
+html.ctk-bg-active main[data-ctk-host]>div:not(#ctk-bg,[role="dialog"],.z-modal),
+html.ctk-bg-active main[data-ctk-host]>div:not(#ctk-bg,[role="dialog"],.z-modal)>div:not([role="dialog"],.z-modal):not([class~="bg-background"]):not([class~="bg-sidebar"]){background-color:transparent!important;background-image:none!important}
 #ctk-bg{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#050507;opacity:0;transition:opacity .18s}
 html[data-ctk-theme="light"] #ctk-bg{background:#f6f4f0}
 html.ctk-bg-image-active #ctk-bg{opacity:1}
