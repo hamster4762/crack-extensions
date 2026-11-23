@@ -20,12 +20,11 @@
     const preloadedMessagesKey = /^\$inf\$\/v3\/chats\/[^/?]+\/messages(?:\?|$)/;
     const singleMessagePath = /^\/crack-gen\/v3\/chats\/[^/]+\/messages\/([a-f0-9]{24})\/?$/i;
     const socketPath = /^wss:\/\/crack-api\.wrtn\.ai\/character-chat\/socket\.io\/?(?:\?|$)/;
-    const messageEventPrefix = /^42(?:\/v3\/chats,)?\d*(?=\["(?:userMessageCreated|characterMessageGenerated)",)/;
+    const messageEventPrefix = /^42\/v3\/chats,\d*(?=\["(?:userMessageCreated|characterMessageGenerated)",)/;
     const groupSelector = '[data-message-group-id]';
     const novelActionsSelector = '.flex.items-center.justify-between.mt-2 > .flex.flex-row.gap-2.items-center';
     const comparePattern = /답변\s*비교\s*(\d+)\s*\/\s*(\d+)/;
     const objectIdPattern = /^[a-f0-9]{24}$/i;
-    const userRoles = new Set(['user', 'human', 'member', 'owner']);
     const numberFormat = new Intl.NumberFormat('ko-KR');
     const messages = new Map();
     const answersByTurn = new Map();
@@ -150,39 +149,21 @@
         if (readMessage(payload?.data, name === 'characterMessageGenerated')) scheduleRender(true);
     }
 
-    function firstString(...values) {
-        return values.find(value => typeof value === 'string' && value.trim()) ?? '';
-    }
-
     function readModel(record) {
-        const keys = [record.crackerModel, record.cracker_model, record.chatModel, record.chatModelId,
-            record.modelId, record.model, record.key, record.code, record.id, record._id, record.name, record.modelName];
-        const name = firstString(record.displayName, record.display_name, record.label, record.name, record.modelName, record.title);
-        const icon = firstString(record.assets?.icon?.default, record.iconUrl, record.icon_url, record.iconImageUrl, record.imageUrl,
-            record.icon?.url, record.image?.url, record.icon, record.image);
-        if (!name && !icon) return false;
-
-        const src = /^https:\/\//i.test(icon) ? icon : '';
+        const name = record?.name;
+        if (typeof name !== 'string' || !name) return false;
+        const icon = record.assets?.icon?.default;
+        const src = typeof icon === 'string' && icon.startsWith('https://') ? icon : '';
         let changed = false;
-        for (const key of keys) {
-            if (typeof key !== 'string' || !key.trim()) continue;
+        for (const key of [record.crackerModel, record._id]) {
+            if (typeof key !== 'string' || !key) continue;
             const previous = models.get(key);
-            const meta = { name: name || previous?.name || '', src: src || previous?.src || '' };
-            if (previous?.name === meta.name && previous?.src === meta.src) continue;
-            models.set(key, meta);
+            const image = src || previous?.src || '';
+            if (previous?.name === name && previous.src === image) continue;
+            models.set(key, { name, src: image });
             changed = true;
         }
         return changed;
-    }
-
-    function textOf(value) {
-        if (typeof value === 'string') return value;
-        if (Array.isArray(value)) return value.map(textOf).join('');
-        if (value && typeof value === 'object') {
-            const text = value.text ?? value.content ?? value.value;
-            return typeof text === 'string' ? text : '';
-        }
-        return '';
     }
 
     function formatTime(raw, id) {
@@ -196,23 +177,21 @@
     }
 
     function readMessage(record, generated = false) {
-        const id = firstString(record?._id, record?.id, record?.messageId, record?.message_id);
-        if (!id || deletedMessages.has(id)) return false;
+        const id = record?._id;
+        if (typeof id !== 'string' || !id || deletedMessages.has(id)) return false;
 
         const previous = messages.get(id);
-        const role = firstString(record.role, record.sender).toLowerCase() || previous?.role || '';
-        const model = userRoles.has(role) ? '' : firstString(record.crackerModel, record.cracker_model,
-            record.chatModel, record.model, record.modelId, record.model_id) || previous?.model || '';
-        const content = record.content ?? record.text ?? record.message ?? record.answer ?? record.response;
+        const role = record.role ?? previous?.role ?? '';
+        const model = role === 'user' ? '' : record.crackerModel || record.chatModelId || previous?.model || '';
         let count = previous?.count ?? null;
-        if (content != null) {
+        if (typeof record.content === 'string') {
             count = 0;
-            for (const char of textOf(content)) count++;
+            for (const char of record.content) count++;
         }
-        const createdAt = record.createdAt ?? record.created_at ?? previous?.createdAt;
+        const createdAt = record.createdAt ?? previous?.createdAt;
         const parentTurnId = role === 'assistant' ? record.parentTurnId ?? previous?.parentTurnId : undefined;
         const cashTotal = record.cashUsage?.total;
-        const cash = generated && !userRoles.has(role) && Number.isFinite(cashTotal) && cashTotal >= 0
+        const cash = generated && Number.isFinite(cashTotal) && cashTotal >= 0
             ? cashTotal : previous?.cash ?? null;
         if (previous && previous.role === role && previous.model === model && previous.count === count &&
             previous.createdAt === createdAt && previous.cash === cash && previous.parentTurnId === parentTurnId) return false;
@@ -265,20 +244,13 @@
             return;
         }
 
+        const read = kind === 'models' ? readModel : readMessage;
+        const records = kind === 'models' ? data?.data?.models : data?.data?.messages;
+        if (!Array.isArray(records)) return;
+
         let changed = false;
-        if (kind === 'models') {
-            function visit(value) {
-                if (!value || typeof value !== 'object') return;
-                if (!Array.isArray(value) && readModel(value)) changed = true;
-                for (const child of Object.values(value)) visit(child);
-            }
-            visit(data);
-        } else {
-            const records = data?.data?.messages ?? data?.messages ?? data?.data ?? data;
-            if (!Array.isArray(records)) return;
-            for (const record of records) {
-                if (readMessage(record)) changed = true;
-            }
+        for (const record of records) {
+            if (read(record)) changed = true;
         }
         if (changed) scheduleRender(true);
     }
@@ -388,7 +360,7 @@
         badge.src = src;
 
         const option = group.querySelector('button[aria-label="메시지 옵션"]');
-        const user = userRoles.has(message.role);
+        const user = message.role === 'user';
         const userBox = user ? group.querySelector('.border-y.border-outline_tertiary.py-5') : null;
         const userBubble = user && !userBox ? group.querySelector('.relative.mb-5.items-end') : null;
         const action = option?.closest('.dropdown-button') || option;
