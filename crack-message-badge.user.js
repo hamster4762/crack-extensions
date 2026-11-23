@@ -18,10 +18,9 @@
     const messagePath = /^\/crack-gen\/v3\/chats\/[^/]+\/messages(?:\/[^/]+\/around)?\/?$/;
     const preloadedPagePath = /^\/_next\/data\/[^/]+\/stories\/[^/]+\/episodes\/[^/]+\.json(?:[?#]|$)/;
     const preloadedMessagesKey = /^\$inf\$\/v3\/chats\/[^/?]+\/messages(?:\?|$)/;
-    const deletePath = /^\/crack-gen\/v3\/chats\/[^/]+\/messages\/([a-f0-9]{24})\/?$/i;
+    const singleMessagePath = /^\/crack-gen\/v3\/chats\/[^/]+\/messages\/([a-f0-9]{24})\/?$/i;
     const socketPath = /^wss:\/\/crack-api\.wrtn\.ai\/character-chat\/socket\.io\/?(?:\?|$)/;
-    const socketEventPrefix = '42/v3/chats,';
-    const generatedPrefix = `${socketEventPrefix}["characterMessageGenerated",`;
+    const messageEventPrefix = /^42(?:\/v3\/chats,)?\d*(?=\["(?:userMessageCreated|characterMessageGenerated)",)/;
     const groupSelector = '[data-message-group-id]';
     const novelActionsSelector = '.flex.items-center.justify-between.mt-2 > .flex.flex-row.gap-2.items-center';
     const comparePattern = /답변\s*비교\s*(\d+)\s*\/\s*(\d+)/;
@@ -47,9 +46,10 @@
             return preloadedPagePath.test(path) ? { kind: 'preloaded' } : null;
         }
         const path = url.slice(api.length).split(/[?#]/, 1)[0];
-        if (typeof method === 'string' && method.toUpperCase() === 'DELETE') {
-            const match = path.match(deletePath);
-            return match ? { kind: 'delete', id: match[1] } : null;
+        const verb = typeof method === 'string' ? method.toUpperCase() : '';
+        if (verb === 'DELETE' || verb === 'PATCH') {
+            const match = path.match(singleMessagePath);
+            return match ? { kind: verb === 'PATCH' ? 'edit' : 'delete', id: match[1] } : null;
         }
         if (/^\/crack-gen\/v[23]\/chat-models\/?$/.test(path)) return { kind: 'models' };
         return messagePath.test(path) ? { kind: 'messages' } : null;
@@ -61,13 +61,25 @@
 
     const fetchFromPage = window.fetch;
     window.fetch = function (input, ...args) {
-        const result = fetchFromPage.call(this, input, ...args);
         const url = typeof input === 'string' ? input : input?.url ?? input?.href;
         const target = responseTarget(url, args[0]?.method ?? input?.method);
+        let editBody;
+        if (target?.kind === 'edit') {
+            editBody = args[0]?.body;
+            if (editBody == null && input instanceof Request && input.body && !input.bodyUsed && !input.body.locked) {
+                editBody = input.clone().text().catch(() => null);
+            }
+        }
+        const result = fetchFromPage.call(this, input, ...args);
         if (target) {
-            result.then(response => {
-                if (response.ok && isJson(response.headers.get('content-type'))) {
-                    return response.clone().json().then(data => readResponse(target, data));
+            result.then(async response => {
+                if (!response.ok) return;
+                const json = isJson(response.headers.get('content-type'));
+                if (target.kind === 'edit') {
+                    const data = json && response.status !== 204 ? await response.clone().json().catch(() => null) : null;
+                    readResponse(target, data, await editBody);
+                } else if (json) {
+                    readResponse(target, await response.clone().json());
                 }
             }).catch(() => {});
         }
@@ -91,10 +103,14 @@
         const read = () => {
             if (this.status < 200 || this.status >= 300) return;
             try {
-                if (this.responseType === 'json') readResponse(target, this.response);
+                let data;
+                if (this.responseType === 'json') data = this.response;
                 else if ((!this.responseType || this.responseType === 'text') && isJson(this.getResponseHeader('content-type'))) {
-                    readResponse(target, JSON.parse(this.responseText));
+                    data = this.responseText ? JSON.parse(this.responseText) : null;
+                } else if (target.kind !== 'edit') {
+                    return;
                 }
+                readResponse(target, data, args[0]);
             } catch {
                 // 페이지가 받은 응답은 그대로 두고 이 응답의 배지만 갱신하지 않습니다.
             }
@@ -108,24 +124,30 @@
         }
     };
 
-    window.WebSocket = new Proxy(window.WebSocket, {
-        construct(target, args, newTarget) {
-            const socket = Reflect.construct(target, args, newTarget);
-            if (socketPath.test(socket.url)) socket.addEventListener('message', readGeneratedMessage);
-            return socket;
+    const watchedSockets = new WeakSet();
+    const sendFromPage = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (...args) {
+        // 크랙이 이미 열어 둔 연결도 다음 전송에서 감시합니다.
+        if (!watchedSockets.has(this) && socketPath.test(this?.url)) {
+            watchedSockets.add(this);
+            this.addEventListener('message', readSocketMessage);
         }
-    });
+        return sendFromPage.apply(this, args);
+    };
 
-    function readGeneratedMessage(event) {
-        if (typeof event.data !== 'string' || !event.data.startsWith(generatedPrefix)) return;
+    function readSocketMessage(event) {
+        if (typeof event.data !== 'string') return;
+        const prefix = messageEventPrefix.exec(event.data);
+        if (!prefix) return;
 
+        let name;
         let payload;
         try {
-            [, payload] = JSON.parse(event.data.slice(socketEventPrefix.length));
+            [name, payload] = JSON.parse(event.data.slice(prefix[0].length));
         } catch {
             return;
         }
-        if (payload?.result === 'SUCCESS' && readMessage(payload.data, true)) scheduleRender(true);
+        if (readMessage(payload?.data, name === 'characterMessageGenerated')) scheduleRender(true);
     }
 
     function firstString(...values) {
@@ -217,7 +239,18 @@
         }
     }
 
-    function readResponse({ kind, id }, data) {
+    function readResponse({ kind, id }, data, requestBody) {
+        if (kind === 'edit') {
+            if (data?.result != null && data.result !== 'SUCCESS') return;
+
+            let content = data?.data?.content ?? data?.data?.message?.content;
+            if (typeof content !== 'string' && typeof requestBody === 'string') {
+                const submitted = JSON.parse(requestBody);
+                content = submitted?.content ?? submitted?.message;
+            }
+            if (typeof content === 'string' && readMessage({ _id: id, content })) scheduleRender(true);
+            return;
+        }
         if (kind === 'preloaded') {
             readPreloadedMessages(data?.pageProps);
             return;
