@@ -88,7 +88,7 @@
             }
             emoji ||= value;
         }
-        label ||= control.getAttribute('aria-label')?.trim() || '';
+        // 보이는 이름이 없으면 메뉴가 아니라 미리보기 썸네일 같은 부속 버튼이다.
         if (!label) return null;
         const graphic = [...control.querySelectorAll('svg, img')].find(el => !el.closest('[role="switch"]'));
         const toggle = control.querySelector('[role="switch"]')
@@ -168,6 +168,7 @@
         gear: svg('<circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>'),
         close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
         back: svg('<path d="M15 5l-7 7 7 7"/>'),
+        image: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15.5l-5-5L5.5 20"/>'),
         alert: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>'),
     };
 
@@ -188,11 +189,12 @@
     const switchButton = (label, on, onclick) =>
         h('button', { type: 'button', role: 'switch', class: 'switch', 'aria-checked': String(on), 'aria-label': label, onclick });
 
-    // 메뉴의 아이콘을 복사한다. 아이콘이 없는 메뉴는 이름의 첫 글자를 쓴다.
+    // 메뉴의 아이콘을 복사한다. 이미지 보관함은 원래 아이콘이 없어 따로 지정하고, 그 밖에는 이름의 첫 글자를 쓴다.
     function itemIcon(item) {
         const box = h('span', { class: 'glyph', 'aria-hidden': 'true' });
         if (!item.graphic) {
-            box.textContent = item.emoji || [...item.label][0];
+            if (!item.emoji && item.label === '이미지 보관함') box.innerHTML = ICON.image;
+            else box.textContent = item.emoji || [...item.label][0];
             return box;
         }
         const copy = item.graphic.cloneNode(true);
