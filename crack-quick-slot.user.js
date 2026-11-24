@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name         크랙 퀵슬롯바
 // @namespace    crack-quick-slot
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI3IiBmaWxsPSIjMjQyMzIxIi8+PGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNCA0KSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjciIGhlaWdodD0iNyIgcng9IjEuNSIvPjxyZWN0IHg9IjE0IiB5PSIzIiB3aWR0aD0iNyIgaGVpZ2h0PSI3IiByeD0iMS41Ii8+PHJlY3QgeD0iMyIgeT0iMTQiIHdpZHRoPSI3IiBoZWlnaHQ9IjciIHJ4PSIxLjUiLz48cGF0aCBkPSJNMTcuNSAxNHY3TTE0IDE3LjVoNyIvPjwvZz48L3N2Zz4=
+// @version      1.0.0.0
 // @description  채팅방 오른쪽 메뉴와 입력창 버튼을 퀵슬롯바에 모아 바로 사용합니다. (version 관리방식: 데이터스키마변경.크랙UI변경.기능추가및수정.버그수정)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
