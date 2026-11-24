@@ -17,7 +17,7 @@
  * │  └─ version → 'v1'
  * └─ v1
  *    ├─ float: { x: number | null, y: number | null }  // 플로팅일 때만 존재. 끌어 옮기기 전 좌표는 null
- *    └─ off: string[]                                  // 퀵슬롯바에서 뺀 메뉴 이름만 저장
+ *    └─ off: string[]                                  // 퀵슬롯바에서 뺀 메뉴·입력창 버튼 이름만 저장
  */
 
 (function () {
@@ -123,8 +123,18 @@
         return [...found.values()].sort((a, b) => a.order - b.order);
     }
 
-    let group = null, panel = null, items = [], settled = false, settleTimer = 0;
-    let queued = false, panelDirty = false;
+    // 크랙 입력창 버튼. 다른 확장의 버튼은 이름이 없거나 상태에 따라 바뀔 수 있어 다루지 않는다.
+    const toolName = label => label.replace(/s*(열기|닫기)$/, '');
+
+    function collectTools() {
+        return [...group.children].filter(el => el.matches('button[aria-label]') && isNative(el)).map(control => ({
+            label: toolName(control.getAttribute('aria-label')), control, toggle: null, on: null,
+            graphic: control.querySelector('svg, img'), emoji: text(control), order: SECTIONS.length + 1,
+        }));
+    }
+
+    let group = null, panel = null, items = [], tools = [], settled = false, settleTimer = 0;
+    let queued = false, panelDirty = false, toolsDirty = false;
 
     function schedule() {
         if (queued) return;
@@ -134,18 +144,25 @@
 
     const panelObserver = new MutationObserver(() => { panelDirty = true; schedule(); });
 
+    const toolsObserver = new MutationObserver(() => { toolsDirty = true; schedule(); });
+
     const barMounted = () => !!group?.isConnected && bar.parentNode === group;
 
     function sync() {
         const remount = !barMounted();
         if (remount) mountBar();
+        const toolsChanged = toolsDirty;
+        if (toolsDirty) {
+            toolsDirty = false;
+            tools = group ? collectTools() : [];
+        }
         if (!panel?.isConnected) {
             const next = document.querySelector(PANEL);
             if (next !== panel) watchPanel(next);
         } else if (panelDirty) {
             panelDirty = false;
             items = collect();
-        } else if (!remount) return;
+        } else if (!remount && !toolsChanged) return;
         render();
     }
 
@@ -217,7 +234,8 @@
     // 화면에 보이는 내용이 바뀌었는지 비교하는 값
     const signature = list => list.map(i => [i.label, !!i.control, i.order, i.on, i.emoji, i.graphic?.outerHTML]);
 
-    const find = label => items.find(item => item.label === label);
+    const allItems = () => [...items, ...tools];
+    const find = label => allItems().find(item => item.label === label);
     const run = label => find(label)?.control?.click();
     const hint = item => item.control ? item.label : `${item.label} (현재 메뉴에 없음)`;
 
@@ -251,13 +269,14 @@
         [data-cqs="input"] { position: absolute !important; inset: 2px 0 auto 0; height: 38px; padding: 0 8px; }
         [data-cqs="float"] {
             position: fixed !important; left: var(--cqs-x, 8px); top: var(--cqs-y, 8px); z-index: 50;
-            max-width: calc(100vw - 16px); height: 40px; padding: 0 8px;
-            border: 1px solid var(--text_disabled); border-radius: 20px;
-            background: var(--bg_elevated_primary); box-shadow: 0 4px 14px rgba(0, 0, 0, .3);
+            max-width: 100vw; height: 36px; padding: 0; background: none;
         }
         /* 왼쪽 그룹이 떠나도 오른쪽 그룹은 오른쪽에 남긴다 */
         div.justify-between:has(> [data-cqs]) > div:last-child { margin-left: auto; }
     `;
+
+    // 숨긴 크랙 버튼. 다시 그려져도 유지되도록 요소가 아니라 이름으로 지정한다.
+    const toolStyle = document.createElement('style');
 
     // ───────────────────────── 퀵슬롯바 ─────────────────────────
     const bar = document.createElement('div');
@@ -284,8 +303,11 @@
         group?.removeAttribute('data-cqs');
         // 메시지 수정창도 같은 모양일 수 있다. 채팅 입력창은 문서에서 가장 마지막에 있다.
         group = [...document.querySelectorAll(GROUP)].at(-1) ?? null;
+        toolsObserver.disconnect();
+        toolsDirty = true;
         if (group) {
             group.prepend(bar);
+            toolsObserver.observe(group, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] });
         } else {
             bar.remove();
             closePop();
@@ -310,6 +332,10 @@
                 return button;
             }));
         }
+        const hiddenTools = tools.filter(tool => off.has(tool.label)).flatMap(({ label }) => [label, `${label} 열기`, `${label} 닫기`])
+            .map(label => `[data-cqs] > button[aria-label="${CSS.escape(label)}"]`);
+        const css = hiddenTools.length ? `${hiddenTools.join(', ')} { display: none !important; }` : '';
+        if (toolStyle.textContent !== css) toolStyle.textContent = css;
         settingsButton.classList.toggle('float', !!data.float);
         if (group) {
             group.setAttribute('data-cqs', data.float ? 'float' : 'input');
@@ -324,8 +350,8 @@
     function moveTo(x, y) {
         const rect = group.getBoundingClientRect();
         const pos = {
-            x: Math.round(Math.max(8, Math.min(x, innerWidth - rect.width - 8))),
-            y: Math.round(Math.max(8, Math.min(y, innerHeight - rect.height - 8))),
+            x: Math.round(Math.max(0, Math.min(x, innerWidth - rect.width))),
+            y: Math.round(Math.max(0, Math.min(y, innerHeight - rect.height))),
         };
         document.documentElement.style.setProperty('--cqs-x', `${pos.x}px`);
         document.documentElement.style.setProperty('--cqs-y', `${pos.y}px`);
@@ -336,7 +362,7 @@
     function placeFloat({ x, y }) {
         if (drag) return;
         const box = group.closest('div.rounded-lg.border').getBoundingClientRect();
-        moveTo(x ?? box.left, y ?? box.top - 52);
+        moveTo(x ?? box.left, y ?? box.top - 36);
     }
 
     settingsButton.addEventListener('pointerdown', e => {
@@ -447,7 +473,7 @@
         const missing = settled && items.some(item => item.control) ? [...off].filter(label => !find(label)) : [];
         if (popView === 'missing' && !missing.length) popView = 'list';
 
-        const key = JSON.stringify([popView, data, missing, signature(items)]);
+        const key = JSON.stringify([popView, data, missing, signature(allItems())]);
         if (key !== popKey) {
             popKey = key;
             const scroll = renderedView === popView ? card.querySelector('.body').scrollTop : 0;
@@ -469,8 +495,8 @@
     const nameOf = item => [itemIcon(item), h('span', { title: hint(item) }, item.label)];
 
     // 구역이 바뀌는 자리에 구분선을 넣는다.
-    const rowsOf = makeRow => items.flatMap((item, i) =>
-        i && item.order !== items[i - 1].order ? [h('div', { class: 'divider' }), makeRow(item)] : [makeRow(item)]);
+    const rowsOf = makeRow => allItems().flatMap((item, i, all) =>
+        i && item.order !== all[i - 1].order ? [h('div', { class: 'divider' }), makeRow(item)] : [makeRow(item)]);
 
     const VIEWS = {
         list({ header, body, missing }) {
@@ -515,7 +541,7 @@
 
     // ───────────────────────── 시작 ─────────────────────────
     migrate();
-    document.head.append(style);
+    document.head.append(style, toolStyle);
     // 채팅이 출력되는 동안에는 연결 상태만 확인한다. 메뉴 내용은 panelObserver가 따로 감지한다.
     new MutationObserver(() => {
         if (!panel?.isConnected || !barMounted()) schedule();
