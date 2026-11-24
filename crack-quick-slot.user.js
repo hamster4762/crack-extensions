@@ -206,7 +206,7 @@
     }
 
     // 화면에 보이는 내용이 바뀌었는지 비교하는 값
-    const signature = list => list.map(i => [i.label, i.on, i.emoji, i.graphic?.outerHTML]);
+    const signature = list => list.map(i => [i.label, i.order, i.on, i.emoji, i.graphic?.outerHTML]);
 
     const find = label => items.find(item => item.label === label);
     const run = label => find(label)?.control.click();
@@ -223,19 +223,26 @@
     // 버튼 그룹은 React가 관리하므로 옮기지 않고 CSS로만 위치를 바꾼다.
     const style = document.createElement('style');
     style.textContent = `
-        div.rounded-lg.border:has([data-cqs="input"]) { position: relative !important; padding-top: 44px !important; }
+        div.rounded-lg.border:has([data-cqs="input"]) { position: relative !important; padding-top: 34px !important; }
         [data-cqs] {
-            display: flex !important; align-items: center !important; gap: 6px !important;
+            display: flex !important; align-items: center !important; gap: 2px !important;
             overflow: auto hidden !important; overscroll-behavior-x: contain;
             scrollbar-width: none !important; touch-action: pan-x;
         }
         [data-cqs]::-webkit-scrollbar { display: none !important; }
         [data-cqs] > * { flex-shrink: 0 !important; }
-        [data-cqs="input"] { position: absolute !important; inset: 0 0 auto 0; height: 44px; padding: 0 12px; }
+        /* 크랙 버튼은 테두리 없이 퀵슬롯과 같은 크기로, 다른 확장 버튼은 모양을 유지한 채 크기만 맞춘다 */
+        [data-cqs] > button.rounded-full.border {
+            width: 26px !important; min-width: 26px !important; height: 26px !important; padding: 0 !important;
+            border-color: transparent !important; background: none !important; color: var(--text_secondary) !important;
+        }
+        [data-cqs] > button.rounded-full.border:hover { background: var(--outline_tertiary) !important; color: var(--text_primary) !important; }
+        [data-cqs] > :not(#crack-quick-slot, button.rounded-full.border) { zoom: .86; }
+        [data-cqs="input"] { position: absolute !important; inset: 2px 0 auto 0; height: 38px; padding: 0 8px; }
         [data-cqs="float"] {
             position: fixed !important; left: var(--cqs-x, 8px); top: var(--cqs-y, 8px); z-index: 50;
-            max-width: calc(100vw - 16px); height: 44px; padding: 0 8px;
-            border: 1px solid var(--text_disabled); border-radius: 22px;
+            max-width: calc(100vw - 16px); height: 40px; padding: 0 8px;
+            border: 1px solid var(--text_disabled); border-radius: 20px;
             background: var(--bg_elevated_primary); box-shadow: 0 4px 14px rgba(0, 0, 0, .3);
         }
         /* 왼쪽 그룹이 떠나도 오른쪽 그룹은 오른쪽에 남긴다 */
@@ -249,18 +256,17 @@
     const slots = h('div', { class: 'slots' });
     const settingsButton = iconButton(ICON.quick, '퀵슬롯바 설정', onSettingsClick, 'main');
     barRoot.append(h('style', {}, `${BASE_CSS}
-        :host, .slots { display: flex; align-items: center; gap: 6px; }
+        :host, .slots { display: flex; align-items: center; gap: 2px; }
         .slots:empty { display: none; }
         .icon {
             display: inline-flex; align-items: center; justify-content: center; flex: none;
-            width: 28px; height: 28px; border-radius: 9999px;
-            border: 1px solid var(--text_disabled, rgba(128, 128, 128, .4)); color: var(--text_secondary, #888);
+            width: 26px; height: 26px; border-radius: 6px; color: var(--text_secondary, #888);
         }
-        .icon:hover { color: var(--text_primary, #888); }
+        .icon:hover { background: var(--outline_tertiary, rgba(128, 128, 128, .2)); color: var(--text_primary, #888); }
         .icon.off { opacity: .4; }
-        .icon.main { background: var(--outline_tertiary, rgba(128, 128, 128, .2)); color: var(--text_primary, #888); }
+        .icon.main { color: var(--text_primary, #888); }
         .icon.main.float { touch-action: none; cursor: grab; }
-        .line { flex: none; width: 1px; height: 18px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
+        .line { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
     `), settingsButton, slots, h('span', { class: 'line' }));
 
     function mountBar() {
@@ -372,10 +378,11 @@
         .icon:hover, .row.link:hover { background: var(--outline_tertiary, rgba(128, 128, 128, .2)); }
         .icon.alert { color: #f04438; }
         .body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 6px 6px; }
-        .row { display: flex; align-items: center; min-height: 40px; border-radius: 8px; padding-right: 8px; }
-        .name { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 40px; padding: 0 8px; text-align: left; }
+        .row { display: flex; align-items: center; min-height: 34px; border-radius: 8px; padding-right: 8px; }
+        .name { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 34px; padding: 0 8px; text-align: left; }
         .name > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .name .glyph { color: var(--text_secondary, #888); }
+        .divider { height: 1px; margin: 4px 8px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
         .sub { padding: 10px 8px 6px; font-size: 12px; color: var(--text_tertiary, #888); }
         .switch { position: relative; flex: none; width: 34px; height: 20px; border-radius: 10px; background: var(--text_disabled, #888); }
         .switch::after {
@@ -448,12 +455,16 @@
     const backTitle = label => [iconButton(ICON.back, '뒤로가기', () => openPop('list')), title(label)];
     const nameOf = item => [itemIcon(item), h('span', { title: item.label }, item.label)];
 
+    // 구역이 바뀌는 자리에 구분선을 넣는다.
+    const rowsOf = makeRow => items.flatMap((item, i) =>
+        i && item.order !== items[i - 1].order ? [h('div', { class: 'divider' }), makeRow(item)] : [makeRow(item)]);
+
     const VIEWS = {
         list({ header, body, missing }) {
             header.append(title('퀵메뉴'));
             if (missing.length) header.append(iconButton(ICON.alert, '찾지 못한 메뉴', () => openPop('missing'), 'alert'));
             header.append(iconButton(ICON.gear, '설정', () => openPop('settings')));
-            body.append(...items.map(item => {
+            body.append(...rowsOf(item => {
                 const row = h('div', { class: 'row link' }, h('button', {
                     type: 'button', class: 'name', onclick: () => { closePop(); run(item.label); },
                 }, ...nameOf(item)));
@@ -474,7 +485,7 @@
                 h('div', { class: 'sub' }, '위치'),
                 h('div', { class: 'choices', role: 'radiogroup', 'aria-label': '위치' }, choice('입력창', false), choice('플로팅', true)),
                 h('div', { class: 'sub' }, '퀵슬롯바에 표시'),
-                ...items.map(item => h('div', { class: 'row' },
+                ...rowsOf(item => h('div', { class: 'row' },
                     h('div', { class: 'name' }, ...nameOf(item)),
                     switchButton(item.label, !off.has(item.label), () => setOff(item.label, !off.has(item.label))))),
             );
