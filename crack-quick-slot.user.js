@@ -158,6 +158,7 @@
         if (toolsDirty) {
             toolsDirty = false;
             tools = group ? collectTools() : [];
+            watchSize();
         }
         if (!panel?.isConnected) {
             const next = document.querySelector(PANEL);
@@ -257,10 +258,12 @@
         div.rounded-lg.border:has([data-cqs="input"]) { position: relative !important; padding-top: 34px !important; }
         [data-cqs] {
             display: flex !important; align-items: center !important; gap: 2px !important;
+        }
+        [data-cqs-scroll] {
             overflow: auto hidden !important; overscroll-behavior-x: contain;
             scrollbar-width: none !important; touch-action: pan-x;
         }
-        [data-cqs]::-webkit-scrollbar { display: none !important; }
+        [data-cqs-scroll]::-webkit-scrollbar { display: none !important; }
         [data-cqs] > * { flex-shrink: 0 !important; }
         /* 크랙 버튼은 테두리 없이 퀵슬롯과 같은 크기로, 다른 확장 버튼은 모양을 유지한 채 크기만 맞춘다 */
         [data-cqs] > button.rounded-full.border {
@@ -272,7 +275,8 @@
         [data-cqs="input"] { position: absolute !important; inset: 2px 0 auto 0; height: 38px; padding: 0 8px; }
         [data-cqs="float"] {
             position: fixed !important; left: var(--cqs-x, 8px); top: var(--cqs-y, 8px); z-index: 50;
-            width: max-content; max-width: min(100vw, var(--cqs-w, 100vw)); height: 36px; padding: 0; background: none;
+            width: max-content; max-width: min(100vw, var(--cqs-w, 100vw)); height: 36px; background: none;
+            padding: 0;
         }
         /* 왼쪽 그룹이 떠나도 오른쪽 그룹은 오른쪽에 남긴다 */
         div.justify-between:has(> [data-cqs]) > div:last-child { margin-left: auto; }
@@ -302,8 +306,25 @@
         .line { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
     `), settingsButton, slots, h('span', { class: 'line' }));
 
+    // scrollWidth는 버튼 밖으로 삐져나온 장식까지 포함하므로, 버튼의 위치로 너비를 구한다.
+    function contentWidth() {
+        const left = group.getBoundingClientRect().left - group.scrollLeft;
+        const right = Math.max(...[...group.children].map(child => child.getBoundingClientRect().right));
+        return right - left + parseFloat(getComputedStyle(group).paddingRight);
+    }
+
+    const sizeObserver = new ResizeObserver(() => {
+        if (group) group.toggleAttribute('data-cqs-scroll', contentWidth() > group.clientWidth + 1);
+    });
+
+    function watchSize() {
+        sizeObserver.disconnect();
+        if (group) [group, ...group.children].forEach(el => sizeObserver.observe(el));
+    }
+
     function mountBar() {
         group?.removeAttribute('data-cqs');
+        group?.removeAttribute('data-cqs-scroll');
         // 메시지 수정창도 같은 모양일 수 있다. 채팅 입력창은 문서에서 가장 마지막에 있다.
         group = [...document.querySelectorAll(GROUP)].at(-1) ?? null;
         toolsObserver.disconnect();
@@ -513,7 +534,7 @@
 
     // 플로팅 너비. 오른쪽 끝이 기본값(내용에 맞춤)이며, 움직이는 동안은 화면에만 반영하고 놓을 때 저장한다.
     function widthSlider(float) {
-        const max = float ? Math.min(group.scrollWidth, innerWidth) : 100;
+        const max = float ? Math.min(Math.ceil(contentWidth()), innerWidth) : 100;
         const min = Math.min(80, max);
         const value = float?.width ? Math.min(float.width, max) : max;
         const input = h('input', { type: 'range', id: 'width', min, max, value });
