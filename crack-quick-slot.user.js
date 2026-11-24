@@ -16,7 +16,10 @@
  * ├─ meta
  * │  └─ version → 'v1'
  * └─ v1
- *    ├─ float: { x: number | null, y: number | null }  // 플로팅일 때만 존재. 끌어 옮기기 전 좌표는 null
+ *    ├─ float                                        // 플로팅일 때만 존재
+ *    │  ├─ x: number | null                          // 끌어 옮기기 전에는 null
+ *    │  ├─ y: number | null
+ *    │  └─ width?: number                            // 최대 너비(px). 내용에 맞춤이면 저장하지 않음
  *    └─ off: string[]                                  // 퀵슬롯바에서 뺀 메뉴·입력창 버튼 이름만 저장
  */
 
@@ -124,7 +127,7 @@
     }
 
     // 크랙 입력창 버튼. 다른 확장의 버튼은 이름이 없거나 상태에 따라 바뀔 수 있어 다루지 않는다.
-    const toolName = label => label.replace(/s*(열기|닫기)$/, '');
+    const toolName = label => label.replace(/ *(열기|닫기)$/, '');
 
     function collectTools() {
         return [...group.children].filter(el => el.matches('button[aria-label]') && isNative(el)).map(control => ({
@@ -269,7 +272,7 @@
         [data-cqs="input"] { position: absolute !important; inset: 2px 0 auto 0; height: 38px; padding: 0 8px; }
         [data-cqs="float"] {
             position: fixed !important; left: var(--cqs-x, 8px); top: var(--cqs-y, 8px); z-index: 50;
-            max-width: 100vw; height: 36px; padding: 0; background: none;
+            width: max-content; max-width: min(100vw, var(--cqs-w, 100vw)); height: 36px; padding: 0; background: none;
         }
         /* 왼쪽 그룹이 떠나도 오른쪽 그룹은 오른쪽에 남긴다 */
         div.justify-between:has(> [data-cqs]) > div:last-child { margin-left: auto; }
@@ -339,7 +342,10 @@
         settingsButton.classList.toggle('float', !!data.float);
         if (group) {
             group.setAttribute('data-cqs', data.float ? 'float' : 'input');
-            if (data.float) placeFloat(data.float);
+            if (data.float) {
+                setFloatWidth(data.float.width);
+                placeFloat(data.float);
+            }
         }
         renderPop();
     }
@@ -356,6 +362,12 @@
         document.documentElement.style.setProperty('--cqs-x', `${pos.x}px`);
         document.documentElement.style.setProperty('--cqs-y', `${pos.y}px`);
         return pos;
+    }
+
+    function setFloatWidth(width) {
+        const root = document.documentElement.style;
+        if (width) root.setProperty('--cqs-w', `${width}px`);
+        else root.removeProperty('--cqs-w');
     }
 
     // 옮긴 적이 없으면 입력창 바로 위에 둔다.
@@ -383,7 +395,7 @@
         if (drag?.id !== e.pointerId) return;
         const { pos } = drag;
         drag = null;
-        if (pos) save(data => { data.float = pos; });
+        if (pos) save(data => { Object.assign(data.float, pos); });
     };
     settingsButton.addEventListener('pointerup', endDrag);
     settingsButton.addEventListener('pointercancel', endDrag);
@@ -433,6 +445,11 @@
         .choices { display: flex; gap: 6px; padding: 0 8px 4px; }
         .choices button { flex: 1; height: 36px; border: 1px solid var(--text_disabled, #888); border-radius: 8px; color: var(--text_secondary, #888); }
         .choices button[aria-checked="true"] { border-color: var(--text_primary, #888); color: var(--text_primary, #888); font-weight: 600; }
+        .width { padding: 0 8px 4px; }
+        .width[aria-disabled="true"] { opacity: .4; }
+        .width label { display: flex; justify-content: space-between; padding: 6px 0 4px; font-size: 12px; color: var(--text_tertiary, #888); }
+        .width input { display: block; width: 100%; margin: 0; accent-color: #12b76a; cursor: pointer; }
+        .width input:disabled { cursor: default; }
         .delete { flex: none; height: 30px; padding: 0 10px; border: 1px solid var(--text_disabled, #888); border-radius: 8px; font-size: 12px; }
     `), card);
 
@@ -494,6 +511,30 @@
     const backTitle = label => [iconButton(ICON.back, '뒤로가기', () => openPop('list')), title(label)];
     const nameOf = item => [itemIcon(item), h('span', { title: hint(item) }, item.label)];
 
+    // 플로팅 너비. 오른쪽 끝이 기본값(내용에 맞춤)이며, 움직이는 동안은 화면에만 반영하고 놓을 때 저장한다.
+    function widthSlider(float) {
+        const max = float ? Math.min(group.scrollWidth, innerWidth) : 100;
+        const min = Math.min(80, max);
+        const value = float?.width ? Math.min(float.width, max) : max;
+        const input = h('input', { type: 'range', id: 'width', min, max, value });
+        const output = h('span');
+        const chosen = () => Number(input.value) < max ? Number(input.value) : undefined;
+        const showValue = () => { output.textContent = chosen() ? `${chosen()}px` : '자동'; };
+        input.disabled = !float;
+        input.addEventListener('input', () => {
+            showValue();
+            setFloatWidth(chosen());
+            placeFloat(load().float);
+        });
+        input.addEventListener('change', () => save(d => {
+            if (chosen()) d.float.width = chosen();
+            else delete d.float.width;
+        }));
+        showValue();
+        return h('div', { class: 'width', 'aria-disabled': String(!float) },
+            h('label', { for: 'width' }, h('span', {}, '플로팅 너비'), output), input);
+    }
+
     // 구역이 바뀌는 자리에 구분선을 넣는다.
     const rowsOf = makeRow => allItems().flatMap((item, i, all) =>
         i && item.order !== all[i - 1].order ? [h('div', { class: 'divider' }), makeRow(item)] : [makeRow(item)]);
@@ -525,6 +566,7 @@
             body.append(
                 h('div', { class: 'sub' }, '위치'),
                 h('div', { class: 'choices', role: 'radiogroup', 'aria-label': '위치' }, choice('입력창', false), choice('플로팅', true)),
+                widthSlider(data.float),
                 h('div', { class: 'sub' }, '퀵슬롯바에 표시'),
                 ...rowsOf(item => h('div', { class: 'row' },
                     h('div', { class: 'name' }, ...nameOf(item)),
