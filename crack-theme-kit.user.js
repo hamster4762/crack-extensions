@@ -6,6 +6,8 @@
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
+// @updateURL    https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-theme-kit.user.js
+// @downloadURL  https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-theme-kit.user.js
 // ==/UserScript==
 
 /*

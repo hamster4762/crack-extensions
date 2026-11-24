@@ -7,8 +7,8 @@
 // @run-at       document-start
 // @noframes
 // @grant        none
-// @updateURL    https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-message-badge.js
-// @downloadURL  https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-message-badge.js
+// @updateURL    https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-message-badge.user.js
+// @downloadURL  https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-message-badge.user.js
 // ==/UserScript==
 
 (() => {

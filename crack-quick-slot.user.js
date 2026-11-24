@@ -9,6 +9,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+// @updateURL    https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-quick-slot.user.js
+// @downloadURL  https://github.com/hamster4762/crack-extensions/raw/refs/heads/main/crack-quick-slot.user.js
 // ==/UserScript==
 
 /*
