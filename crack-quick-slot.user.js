@@ -68,6 +68,8 @@
     const SECTIONS = ['채팅방 설정', '', '스토리 고급 설정', '전체 설정'];
     // 메뉴에 없는 동안에도 자리를 지키는 고정 슬롯. 크랙 메뉴에 원래 아이콘이 없어 아이콘도 따로 지정한다.
     const GALLERY = '이미지 보관함';
+    // 보유 개수를 바의 맨 오른쪽에 표시하는 구역
+    const CRACKER = '나의 크래커';
     // 켜짐 상태를 속성으로 알리지 않는 크랙 버튼. 켜져 있을 때만 아이콘 옆에 이름이 붙는다.
     const REPLY = '추천답변';
     const REPLY_ON = ':has(> svg + span)';
@@ -121,6 +123,12 @@
                 if (!isNative(row)) add(row);
                 else if (row.matches(HEADING)) section = text(row);
                 else if (row.matches('.box-content') && SECTIONS.includes(section)) add(row);
+                else if (row.matches('.box-content') && section === CRACKER) {
+                    found.set(CRACKER, {
+                        label: CRACKER, value: text(row), control: controlsIn(row)[0], graphic: row.querySelector('svg, img'),
+                        emoji: '', toggle: null, on: null, order: SECTIONS.length + 2,
+                    });
+                }
             }
         }
         if (!found.has(GALLERY)) {
@@ -155,7 +163,7 @@
 
     const toolsObserver = new MutationObserver(() => { toolsDirty = true; schedule(); });
 
-    const barMounted = () => !!group?.isConnected && bar.parentNode === group;
+    const barMounted = () => !!group?.isConnected && bar.parentNode === group && crackerBar.parentNode === group;
 
     function sync() {
         const remount = !barMounted();
@@ -242,9 +250,9 @@
     }
 
     // 화면에 보이는 내용이 바뀌었는지 비교하는 값
-    const signature = list => list.map(i => [i.label, !!i.control, i.order, i.on, i.emoji, i.graphic?.outerHTML]);
+    const signature = list => list.map(i => [i.label, i.value, !!i.control, i.order, i.on, i.emoji, i.graphic?.outerHTML]);
 
-    const allItems = () => [...items, ...tools];
+    const allItems = () => [...items, ...tools].sort((a, b) => a.order - b.order);
     const find = label => allItems().find(item => item.label === label);
     const run = label => find(label)?.control?.click();
     const hint = item => item.control ? item.label : `${item.label} (현재 메뉴에 없음)`;
@@ -279,11 +287,11 @@
         [data-cqs] > button[aria-label="${REPLY}"] > span { display: none !important; }
         [data-cqs] > button[aria-label="${REPLY}"]:not(${REPLY_ON}) { opacity: .4 !important; }
         [data-cqs] > button.rounded-full.border:hover { background: var(--outline_tertiary) !important; color: var(--text_primary) !important; }
-        [data-cqs] > :not(#crack-quick-slot, button.rounded-full.border) { zoom: .86; }
+        [data-cqs] > :not(#crack-quick-slot, #crack-quick-slot-cracker, button.rounded-full.border) { zoom: .86; }
         [data-cqs="input"] { position: absolute !important; inset: 2px 0 auto 0; height: 38px; padding: 0 8px; }
         [data-cqs="float"] {
             position: fixed !important; left: var(--cqs-x, 8px); top: var(--cqs-y, 8px); z-index: 50;
-            width: max-content; max-width: min(100vw, var(--cqs-w, 100vw)); height: 36px; background: none;
+            flex-wrap: wrap; width: max-content; max-width: min(100vw, var(--cqs-w, 100vw)); background: none;
             padding: 0;
         }
         /* 왼쪽 그룹이 떠나도 오른쪽 그룹은 오른쪽에 남긴다 */
@@ -298,10 +306,11 @@
     bar.id = 'crack-quick-slot';
     const barRoot = bar.attachShadow({ mode: 'open' });
     const slots = h('div', { class: 'slots' });
+    const line = h('span', { class: 'line' });
+    const LINE_SPACE = 11; // 세로 구분선과 양옆 여백
     const settingsButton = iconButton(ICON.quick, '퀵슬롯바 설정', onSettingsClick, 'main');
     barRoot.append(h('style', {}, `${BASE_CSS}
-        :host, .slots { display: flex; align-items: center; gap: 2px; }
-        .slots:empty { display: none; }
+        :host, .slots { display: contents; }
         .icon {
             display: inline-flex; align-items: center; justify-content: center; flex: none;
             width: 26px; height: 26px; border-radius: 6px; color: var(--text_secondary, #888);
@@ -311,19 +320,41 @@
         .icon:disabled { cursor: default; background: none; color: var(--text_secondary, #888); }
         .icon.main { color: var(--text_primary, #888); }
         .icon.main.float { touch-action: none; cursor: grab; }
+        .line.flat { width: 16px; height: 1px; margin: 4px 5px; }
         .line { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
-    `), settingsButton, slots, h('span', { class: 'line' }));
+    `), settingsButton, slots, line);
 
-    // scrollWidth는 버튼 밖으로 삐져나온 장식까지 포함하므로, 버튼의 위치로 너비를 구한다.
+    // 다른 확장이 뒤에 버튼을 붙여도 맨 오른쪽에 오도록 순서는 CSS로 정한다.
+    const crackerBar = document.createElement('div');
+    crackerBar.id = 'crack-quick-slot-cracker';
+    const crackerRoot = crackerBar.attachShadow({ mode: 'open' });
+    const crackerSlot = h('div', { class: 'slot' });
+    crackerRoot.append(h('style', {}, `${BASE_CSS}
+        :host, .slot { display: contents; }
+        button {
+            display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px; flex: none; order: 9999;
+            max-width: 100%; min-height: 26px; padding: 0 4px; border-radius: 6px;
+            font-size: 12px; line-height: 1; white-space: nowrap; color: var(--text_secondary, #888);
+        }
+        button:hover { background: var(--outline_tertiary, rgba(128, 128, 128, .2)); color: var(--text_primary, #888); }
+    `), crackerSlot);
+
+    // 한 줄로 놓았을 때의 너비. scrollWidth는 버튼 밖으로 삐져나온 장식까지 포함하므로 버튼의 크기를 더한다.
     function contentWidth() {
-        const left = group.getBoundingClientRect().left - group.scrollLeft;
-        const right = Math.max(...[...group.children].map(child => child.getBoundingClientRect().right));
-        return right - left + parseFloat(getComputedStyle(group).paddingRight);
+        const css = getComputedStyle(group), gap = parseFloat(css.columnGap) || 0;
+        const buttons = [settingsButton, ...slots.children, ...crackerSlot.children,
+            ...[...group.children].filter(el => el !== bar && el !== crackerBar)];
+        const widths = buttons.map(el => el.getBoundingClientRect().width).filter(width => width > 0);
+        return widths.reduce((sum, width) => sum + width + gap, -gap) + LINE_SPACE
+            + parseFloat(css.paddingLeft) + parseFloat(css.paddingRight);
     }
 
-    const sizeObserver = new ResizeObserver(() => {
-        if (group) group.toggleAttribute('data-cqs-scroll', contentWidth() > group.clientWidth + 1);
-    });
+    // 입력창에서는 넘치면 가로로 스크롤하고, 플로팅에서는 여러 줄로 놓는다.
+    function syncScroll() {
+        group.toggleAttribute('data-cqs-scroll', group.dataset.cqs === 'input' && contentWidth() > group.clientWidth + 1);
+    }
+
+    const sizeObserver = new ResizeObserver(() => { if (group) syncScroll(); });
 
     function watchSize() {
         sizeObserver.disconnect();
@@ -338,19 +369,20 @@
         toolsObserver.disconnect();
         toolsDirty = true;
         if (group) {
-            group.prepend(bar);
+            group.prepend(bar, crackerBar);
             toolsObserver.observe(group, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] });
         } else {
             bar.remove();
+            crackerBar.remove();
             closePop();
         }
     }
 
-    let barKey = '';
+    let barKey = '', crackerKey = '';
     function render() {
         const data = load(), off = new Set(data.off);
         // 메뉴가 다시 그려져도 보이는 내용이 같으면 버튼을 유지한다. 누르면 그때의 최신 항목을 찾는다.
-        const shown = items.filter(item => !off.has(item.label));
+        const shown = items.filter(item => item.label !== CRACKER && !off.has(item.label));
         const key = JSON.stringify(signature(shown));
         if (key !== barKey) {
             barKey = key;
@@ -364,6 +396,14 @@
                 return button;
             }));
         }
+        const cracker = off.has(CRACKER) ? null : find(CRACKER);
+        const nextKey = cracker ? JSON.stringify(signature([cracker])) : '';
+        if (nextKey !== crackerKey) {
+            crackerKey = nextKey;
+            crackerSlot.replaceChildren(...(cracker ? [h('button', {
+                type: 'button', title: CRACKER, 'aria-label': `${CRACKER} ${cracker.value}`, onclick: () => run(CRACKER),
+            }, itemIcon(cracker), h('span', {}, cracker.value))] : []));
+        }
         const hiddenTools = tools.filter(tool => off.has(tool.label)).flatMap(({ label }) => [label, `${label} 열기`, `${label} 닫기`])
             .map(label => `[data-cqs] > button[aria-label="${CSS.escape(label)}"]`);
         const css = hiddenTools.length ? `${hiddenTools.join(', ')} { display: none !important; }` : '';
@@ -371,10 +411,9 @@
         settingsButton.classList.toggle('float', !!data.float);
         if (group) {
             group.setAttribute('data-cqs', data.float ? 'float' : 'input');
-            if (data.float) {
-                setFloatWidth(data.float.width);
-                placeFloat(data.float);
-            }
+            setFloatWidth(data.float?.width);
+            if (data.float) placeFloat(data.float);
+            syncScroll();
         }
         renderPop();
     }
@@ -393,17 +432,21 @@
         return pos;
     }
 
+    // 버튼 한 칸의 너비. 두 칸보다 좁히면 세로 한 줄이 된다.
+    const COLUMN = 26;
+
     function setFloatWidth(width) {
         const root = document.documentElement.style;
         if (width) root.setProperty('--cqs-w', `${width}px`);
         else root.removeProperty('--cqs-w');
+        line.classList.toggle('flat', width < COLUMN * 2);
     }
 
     // 옮긴 적이 없으면 입력창 바로 위에 둔다.
     function placeFloat({ x, y }) {
         if (drag) return;
         const box = group.closest('div.rounded-lg.border').getBoundingClientRect();
-        moveTo(x ?? box.left, y ?? box.top - 36);
+        moveTo(x ?? box.left, y ?? box.top - group.offsetHeight - 8);
     }
 
     settingsButton.addEventListener('pointerdown', e => {
@@ -463,6 +506,7 @@
         .name:disabled { opacity: .4; cursor: default; }
         .name .glyph { color: var(--text_secondary, #888); }
         .divider { height: 1px; margin: 4px 8px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
+        .value { flex: none; font-size: 13px; color: var(--text_secondary, #888); }
         .sub { padding: 10px 8px 6px; font-size: 12px; color: var(--text_tertiary, #888); }
         .switch { position: relative; flex: none; width: 34px; height: 20px; border-radius: 10px; background: var(--text_disabled, #888); }
         .switch::after {
@@ -543,7 +587,7 @@
     // 플로팅 너비. 오른쪽 끝이 기본값(내용에 맞춤)이며, 움직이는 동안은 화면에만 반영하고 놓을 때 저장한다.
     function widthSlider(float) {
         const max = float ? Math.min(Math.ceil(contentWidth()), innerWidth) : 100;
-        const min = Math.min(80, max);
+        const min = Math.min(COLUMN, max);
         const value = float?.width ? Math.min(float.width, max) : max;
         const input = h('input', { type: 'range', id: 'width', min, max, value });
         const output = h('span');
@@ -579,6 +623,7 @@
                 }, ...nameOf(item));
                 open.disabled = !item.control;
                 const row = h('div', { class: item.control ? 'row link' : 'row' }, open);
+                if (item.value) row.append(h('span', { class: 'value' }, item.value));
                 if (item.on !== null) row.append(switchButton(item.label, item.on, () => find(item.label)?.toggle?.click()));
                 return row;
             }));
