@@ -264,6 +264,8 @@
         button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
         .glyph { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; font-size: 14px; line-height: 1; }
         .glyph > svg, .glyph > img { width: 18px; height: 18px; }
+        .line.flat { width: 16px; height: 1px; margin: 4px 5px; }
+        .line { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
     `;
 
     // 버튼 그룹은 React가 관리하므로 옮기지 않고 CSS로만 위치를 바꾼다.
@@ -320,8 +322,6 @@
         .icon:disabled { cursor: default; background: none; color: var(--text_secondary, #888); }
         .icon.main { color: var(--text_primary, #888); }
         .icon.main.float { touch-action: none; cursor: grab; }
-        .line.flat { width: 16px; height: 1px; margin: 4px 5px; }
-        .line { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
     `), settingsButton, slots, line);
 
     // 다른 확장이 뒤에 버튼을 붙여도 맨 오른쪽에 오도록 순서는 CSS로 정한다.
@@ -329,8 +329,10 @@
     crackerBar.id = 'crack-quick-slot-cracker';
     const crackerRoot = crackerBar.attachShadow({ mode: 'open' });
     const crackerSlot = h('div', { class: 'slot' });
+    const crackerLine = h('span', { class: 'line' });
     crackerRoot.append(h('style', {}, `${BASE_CSS}
         :host, .slot { display: contents; }
+        .line { order: 9998; }
         button {
             display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px; flex: none; order: 9999;
             max-width: 100%; min-height: 26px; padding: 0 4px; border-radius: 6px;
@@ -342,10 +344,10 @@
     // 한 줄로 놓았을 때의 너비. scrollWidth는 버튼 밖으로 삐져나온 장식까지 포함하므로 버튼의 크기를 더한다.
     function contentWidth() {
         const css = getComputedStyle(group), gap = parseFloat(css.columnGap) || 0;
-        const buttons = [settingsButton, ...slots.children, ...crackerSlot.children,
+        const buttons = [settingsButton, ...slots.children, ...crackerSlot.querySelectorAll('button'),
             ...[...group.children].filter(el => el !== bar && el !== crackerBar)];
         const widths = buttons.map(el => el.getBoundingClientRect().width).filter(width => width > 0);
-        return widths.reduce((sum, width) => sum + width + gap, -gap) + LINE_SPACE
+        return widths.reduce((sum, width) => sum + width + gap, -gap) + LINE_SPACE * (crackerLine.isConnected ? 2 : 1)
             + parseFloat(css.paddingLeft) + parseFloat(css.paddingRight);
     }
 
@@ -400,7 +402,7 @@
         const nextKey = cracker ? JSON.stringify(signature([cracker])) : '';
         if (nextKey !== crackerKey) {
             crackerKey = nextKey;
-            crackerSlot.replaceChildren(...(cracker ? [h('button', {
+            crackerSlot.replaceChildren(...(cracker ? [crackerLine, h('button', {
                 type: 'button', title: CRACKER, 'aria-label': `${CRACKER} ${cracker.value}`, onclick: () => run(CRACKER),
             }, itemIcon(cracker), h('span', {}, cracker.value))] : []));
         }
@@ -439,7 +441,7 @@
         const root = document.documentElement.style;
         if (width) root.setProperty('--cqs-w', `${width}px`);
         else root.removeProperty('--cqs-w');
-        line.classList.toggle('flat', width < COLUMN * 2);
+        for (const el of [line, crackerLine]) el.classList.toggle('flat', width < COLUMN * 2);
     }
 
     // 옮긴 적이 없으면 입력창 바로 위에 둔다.
