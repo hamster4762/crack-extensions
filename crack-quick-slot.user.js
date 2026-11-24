@@ -68,6 +68,9 @@
     const SECTIONS = ['채팅방 설정', '', '스토리 고급 설정', '전체 설정'];
     // 메뉴에 없는 동안에도 자리를 지키는 고정 슬롯. 크랙 메뉴에 원래 아이콘이 없어 아이콘도 따로 지정한다.
     const GALLERY = '이미지 보관함';
+    // 켜짐 상태를 속성으로 알리지 않는 크랙 버튼. 켜져 있을 때만 아이콘 옆에 이름이 붙는다.
+    const REPLY = '추천답변';
+    const REPLY_ON = ':has(> svg + span)';
     // 입력창 왼쪽 아래 버튼 그룹. 줄 맨 앞에 버튼 없는 요소가 끼어들 수 있어 버튼을 직접 가진 첫 자식을 찾는다.
     const GROUP = 'div.rounded-lg.border:has(.ProseMirror) > div > div.justify-between > div:nth-child(1 of :has(> button))';
 
@@ -130,10 +133,13 @@
     const toolName = label => label.replace(/ *(열기|닫기)$/, '');
 
     function collectTools() {
-        return [...group.children].filter(el => el.matches('button[aria-label]') && isNative(el)).map(control => ({
-            label: toolName(control.getAttribute('aria-label')), control, toggle: null, on: null,
-            graphic: control.querySelector('svg, img'), emoji: text(control), order: SECTIONS.length + 1,
-        }));
+        return [...group.children].filter(el => el.matches('button[aria-label]') && isNative(el)).map(control => {
+            const label = toolName(control.getAttribute('aria-label')), isToggle = label === REPLY;
+            return {
+                label, control, toggle: isToggle ? control : null, on: isToggle ? control.matches(REPLY_ON) : null,
+                graphic: control.querySelector('svg, img'), emoji: text(control), order: SECTIONS.length + 1,
+            };
+        });
     }
 
     let group = null, panel = null, items = [], tools = [], settled = false, settleTimer = 0;
@@ -270,6 +276,8 @@
             width: 26px !important; min-width: 26px !important; height: 26px !important; padding: 0 !important;
             border-color: transparent !important; background: none !important; color: var(--text_secondary) !important;
         }
+        [data-cqs] > button[aria-label="${REPLY}"] > span { display: none !important; }
+        [data-cqs] > button[aria-label="${REPLY}"]:not(${REPLY_ON}) { opacity: .4 !important; }
         [data-cqs] > button.rounded-full.border:hover { background: var(--outline_tertiary) !important; color: var(--text_primary) !important; }
         [data-cqs] > :not(#crack-quick-slot, button.rounded-full.border) { zoom: .86; }
         [data-cqs="input"] { position: absolute !important; inset: 2px 0 auto 0; height: 38px; padding: 0 8px; }
