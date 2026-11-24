@@ -61,6 +61,8 @@
     // 크랙 기본 메뉴에서 가져올 구역과 표시 순서. ''는 제목 없는 맨 위 구역(이미지 보관함)이다.
     // 구역 안의 항목과 다른 확장의 항목은 이름을 지정하지 않는다.
     const SECTIONS = ['채팅방 설정', '', '스토리 고급 설정', '전체 설정'];
+    // 메뉴에 없는 동안에도 자리를 지키는 고정 슬롯. 크랙 메뉴에 원래 아이콘이 없어 아이콘도 따로 지정한다.
+    const GALLERY = '이미지 보관함';
     // 입력창 왼쪽 아래 버튼 그룹. 줄 맨 앞에 버튼 없는 요소가 끼어들 수 있어 버튼을 직접 가진 첫 자식을 찾는다.
     const GROUP = 'div.rounded-lg.border:has(.ProseMirror) > div > div.justify-between > div:nth-child(1 of :has(> button))';
 
@@ -112,6 +114,9 @@
                 else if (row.matches(HEADING)) section = text(row);
                 else if (row.matches('.box-content') && SECTIONS.includes(section)) add(row);
             }
+        }
+        if (!found.has(GALLERY)) {
+            found.set(GALLERY, { label: GALLERY, control: null, emoji: '', toggle: null, on: null, order: SECTIONS.indexOf('') });
         }
         return [...found.values()].sort((a, b) => a.order - b.order);
     }
@@ -189,11 +194,11 @@
     const switchButton = (label, on, onclick) =>
         h('button', { type: 'button', role: 'switch', class: 'switch', 'aria-checked': String(on), 'aria-label': label, onclick });
 
-    // 메뉴의 아이콘을 복사한다. 이미지 보관함은 원래 아이콘이 없어 따로 지정하고, 그 밖에는 이름의 첫 글자를 쓴다.
+    // 메뉴의 아이콘을 복사한다. 아이콘이 없는 메뉴는 이름의 첫 글자를 쓴다.
     function itemIcon(item) {
         const box = h('span', { class: 'glyph', 'aria-hidden': 'true' });
         if (!item.graphic) {
-            if (!item.emoji && item.label === '이미지 보관함') box.innerHTML = ICON.image;
+            if (!item.emoji && item.label === GALLERY) box.innerHTML = ICON.image;
             else box.textContent = item.emoji || [...item.label][0];
             return box;
         }
@@ -208,10 +213,11 @@
     }
 
     // 화면에 보이는 내용이 바뀌었는지 비교하는 값
-    const signature = list => list.map(i => [i.label, i.order, i.on, i.emoji, i.graphic?.outerHTML]);
+    const signature = list => list.map(i => [i.label, !!i.control, i.order, i.on, i.emoji, i.graphic?.outerHTML]);
 
     const find = label => items.find(item => item.label === label);
-    const run = label => find(label)?.control.click();
+    const run = label => find(label)?.control?.click();
+    const hint = item => item.control ? item.label : `${item.label} (현재 메뉴에 없음)`;
 
     const BASE_CSS = `
         :host { color: var(--text_primary, #888); }
@@ -266,6 +272,7 @@
         }
         .icon:hover { background: var(--outline_tertiary, rgba(128, 128, 128, .2)); color: var(--text_primary, #888); }
         .icon.off { opacity: .4; }
+        .icon:disabled { cursor: default; background: none; color: var(--text_secondary, #888); }
         .icon.main { color: var(--text_primary, #888); }
         .icon.main.float { touch-action: none; cursor: grab; }
         .line { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
@@ -293,9 +300,10 @@
             barKey = key;
             slots.replaceChildren(...shown.map(item => {
                 const button = h('button', {
-                    type: 'button', class: `icon${item.on === false ? ' off' : ''}`,
-                    title: item.label, 'aria-label': item.label, onclick: () => run(item.label),
+                    type: 'button', class: `icon${item.on === false || !item.control ? ' off' : ''}`,
+                    title: hint(item), 'aria-label': hint(item), onclick: () => run(item.label),
                 }, itemIcon(item));
+                button.disabled = !item.control;
                 if (item.on !== null) button.setAttribute('aria-pressed', String(item.on));
                 return button;
             }));
@@ -383,6 +391,7 @@
         .row { display: flex; align-items: center; min-height: 34px; border-radius: 8px; padding-right: 8px; }
         .name { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 34px; padding: 0 8px; text-align: left; }
         .name > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .name:disabled { opacity: .4; cursor: default; }
         .name .glyph { color: var(--text_secondary, #888); }
         .divider { height: 1px; margin: 4px 8px; background: var(--text_disabled, rgba(128, 128, 128, .4)); }
         .sub { padding: 10px 8px 6px; font-size: 12px; color: var(--text_tertiary, #888); }
@@ -433,7 +442,7 @@
         if (!popView) return;
         const data = load(), off = new Set(data.off);
         // 메뉴를 다 읽은 뒤에만 찾지 못했다고 판단한다.
-        const missing = settled && items.length ? [...off].filter(label => !find(label)) : [];
+        const missing = settled && items.some(item => item.control) ? [...off].filter(label => !find(label)) : [];
         if (popView === 'missing' && !missing.length) popView = 'list';
 
         const key = JSON.stringify([popView, data, missing, signature(items)]);
@@ -455,7 +464,7 @@
 
     const title = label => h('span', { class: 'title' }, label);
     const backTitle = label => [iconButton(ICON.back, '뒤로가기', () => openPop('list')), title(label)];
-    const nameOf = item => [itemIcon(item), h('span', { title: item.label }, item.label)];
+    const nameOf = item => [itemIcon(item), h('span', { title: hint(item) }, item.label)];
 
     // 구역이 바뀌는 자리에 구분선을 넣는다.
     const rowsOf = makeRow => items.flatMap((item, i) =>
@@ -467,9 +476,11 @@
             if (missing.length) header.append(iconButton(ICON.alert, '찾지 못한 메뉴', () => openPop('missing'), 'alert'));
             header.append(iconButton(ICON.gear, '설정', () => openPop('settings')));
             body.append(...rowsOf(item => {
-                const row = h('div', { class: 'row link' }, h('button', {
+                const open = h('button', {
                     type: 'button', class: 'name', onclick: () => { closePop(); run(item.label); },
-                }, ...nameOf(item)));
+                }, ...nameOf(item));
+                open.disabled = !item.control;
+                const row = h('div', { class: item.control ? 'row link' : 'row' }, open);
                 if (item.on !== null) row.append(switchButton(item.label, item.on, () => find(item.label)?.toggle?.click()));
                 return row;
             }));
@@ -494,9 +505,9 @@
         },
         missing({ header, body, missing }) {
             header.append(...backTitle('찾지 못한 메뉴'));
-            body.append(...missing.map(label => h('div', { class: 'row' },
+            body.append(h('div', { class: 'sub' }, '퀵슬롯바에서 숨긴 메뉴 중 현재 찾을 수 없는 메뉴입니다. 숨김을 해제하면 메뉴가 다시 나타났을 때 퀵슬롯바에 표시됩니다.'), ...missing.map(label => h('div', { class: 'row' },
                 h('div', { class: 'name' }, h('span', { title: label }, label)),
-                h('button', { type: 'button', class: 'delete', onclick: () => setOff(label, false) }, '삭제'))));
+                h('button', { type: 'button', class: 'delete', onclick: () => setOff(label, false) }, '숨김 해제'))));
         },
     };
 
