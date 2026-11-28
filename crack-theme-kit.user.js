@@ -2,7 +2,7 @@
 // @name         Crack Theme Kit (배경·테마)
 // @namespace    crack-theme-kit
 // @description  크랙 채팅 화면에 배경 이미지와 테마를 적용합니다. 채팅방마다 사용할 프리셋을 선택할 수 있습니다. (version 관리방식: 데이터스키마변경.크랙UI변경.기능추가및수정.버그수정)
-// @version      1.0.0.0
+// @version      1.0.0.1
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
 // @grant        none
@@ -10516,6 +10516,7 @@ html[data-ctk-ui-style="nyang"][data-ctk-theme="light"]{--ny-body:#f4f2ee;--ny-l
   // ───────────────────────── 고정 CSS ─────────────────────────
   const BASE_CSS = `
 html.ctk-bg-active main[data-ctk-host]{isolation:isolate}
+html.ctk-bg-active main[data-ctk-host]:has([role="dialog"].z-modal){isolation:auto}
 html.ctk-bg-active main[data-ctk-host]>div:not(#ctk-bg,[role="dialog"],.z-modal),
 html.ctk-bg-active main[data-ctk-host]>div:not(#ctk-bg,[role="dialog"],.z-modal)>div:not([role="dialog"],.z-modal):not([class~="bg-background"]):not([class~="bg-sidebar"]){background-color:transparent!important;background-image:none!important}
 #ctk-bg{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#050507;opacity:0;transition:opacity .18s}
